@@ -23,6 +23,39 @@ AI-powered terminal assistant that integrates OpenAI GPT into your Linux termina
 
 ## Installation
 
+### Pre-built binaries
+
+Pre-built binaries for Linux and macOS are available on the [Releases](https://github.com/cycl0o0/GPTerminal/releases) page. Download the archive for your platform, extract it, and move the binary to a directory in your `PATH`:
+
+```bash
+# Example for Linux amd64
+tar xzf gpterminal-linux-amd64.tar.gz
+sudo mv gpterminal-linux-amd64 /usr/local/bin/gpterminal
+```
+
+```bash
+# Example for macOS arm64 (Apple Silicon)
+tar xzf gpterminal-darwin-arm64.tar.gz
+sudo mv gpterminal-darwin-arm64 /usr/local/bin/gpterminal
+```
+
+Or, if you prefer a user-local install without `sudo`:
+
+```bash
+mkdir -p ~/.local/bin
+mv gpterminal-linux-amd64 ~/.local/bin/gpterminal
+```
+
+Make sure `~/.local/bin` is in your `PATH`. Add this to your shell rc file if it isn't:
+
+```bash
+# Bash (~/.bashrc) or Zsh (~/.zshrc)
+export PATH="$HOME/.local/bin:$PATH"
+
+# Fish (~/.config/fish/config.fish)
+fish_add_path ~/.local/bin
+```
+
 ### Build from source
 
 ```bash
