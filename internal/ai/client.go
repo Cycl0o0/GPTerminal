@@ -18,10 +18,16 @@ type Client struct {
 
 func NewClient() (*Client, error) {
 	key := config.APIKey()
-	if key == "" {
+	baseURL := config.APIBaseURL()
+
+	// When using a custom base URL (e.g. Ollama), the API key is optional
+	if key == "" && baseURL == config.DefaultBaseURL {
 		return nil, fmt.Errorf("OpenAI API key not set. Run: gpterminal config set-key <key>\nOr set OPENAI_API_KEY environment variable")
 	}
-	return &Client{client: openai.NewClient(key)}, nil
+
+	cfg := openai.DefaultConfig(key)
+	cfg.BaseURL = baseURL
+	return &Client{client: openai.NewClientWithConfig(cfg)}, nil
 }
 
 func (c *Client) Complete(ctx context.Context, messages []openai.ChatCompletionMessage) (string, error) {

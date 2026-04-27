@@ -28,6 +28,20 @@ var setKeyCmd = &cobra.Command{
 	},
 }
 
+var setBaseURLCmd = &cobra.Command{
+	Use:   "set-base-url <url>",
+	Short: "Save the API base URL to config (e.g. http://localhost:11434/v1 for Ollama)",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		url := args[0]
+		if err := config.SaveAPIBaseURL(url); err != nil {
+			fmt.Fprintln(os.Stderr, "Error saving API base URL:", err)
+			os.Exit(1)
+		}
+		fmt.Printf("API base URL saved to %s\n", config.ConfigFile())
+	},
+}
+
 var showConfigCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Show current configuration",
@@ -40,6 +54,7 @@ var showConfigCmd = &cobra.Command{
 		} else {
 			fmt.Println("API Key: (not set)")
 		}
+		fmt.Printf("Base URL: %s\n", config.APIBaseURL())
 		fmt.Printf("Model: %s\n", config.Model())
 		fmt.Printf("Temperature: %.1f\n", config.Temperature())
 		fmt.Printf("Max Tokens: %d\n", config.MaxTokens())
@@ -73,6 +88,7 @@ var usageCmd = &cobra.Command{
 
 func init() {
 	configCmd.AddCommand(setKeyCmd)
+	configCmd.AddCommand(setBaseURLCmd)
 	configCmd.AddCommand(showConfigCmd)
 	configCmd.AddCommand(usageCmd)
 	rootCmd.AddCommand(configCmd)

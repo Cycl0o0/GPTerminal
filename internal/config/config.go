@@ -16,6 +16,7 @@ const (
 	DefaultWarnPct    = 80.0
 	DefaultImageModel = "gpt-image-1"
 	DefaultImageSize  = "1024x1024"
+	DefaultBaseURL    = "https://api.openai.com/v1"
 )
 
 func Init() {
@@ -32,10 +33,12 @@ func Init() {
 	viper.SetDefault("warn_threshold", DefaultWarnPct)
 	viper.SetDefault("image_model", DefaultImageModel)
 	viper.SetDefault("image_size", DefaultImageSize)
+	viper.SetDefault("api_base_url", DefaultBaseURL)
 
 	viper.SetEnvPrefix("OPENAI")
 	viper.BindEnv("api_key")
 	viper.BindEnv("model", "OPENAI_MODEL")
+	viper.BindEnv("api_base_url", "OPENAI_API_BASE_URL")
 
 	_ = viper.ReadInConfig()
 }
@@ -83,6 +86,25 @@ func ImageModel() string {
 
 func ImageSize() string {
 	return viper.GetString("image_size")
+}
+
+func APIBaseURL() string {
+	return viper.GetString("api_base_url")
+}
+
+func SaveAPIBaseURL(url string) error {
+	dir := ConfigDir()
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+
+	viper.Set("api_base_url", url)
+
+	cfgFile := ConfigFile()
+	if err := viper.WriteConfigAs(cfgFile); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	return os.Chmod(cfgFile, 0600)
 }
 
 func SaveAPIKey(key string) error {

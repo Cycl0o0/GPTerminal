@@ -25,4 +25,5 @@ func init() {
 	cobra.OnInitialize(config.Init)
 	rootCmd.PersistentFlags().String("model", "", "OpenAI model to use")
 	rootCmd.PersistentFlags().String("api-key", "", "OpenAI API key")
+	rootCmd.PersistentFlags().String("api-base-url", "", "API base URL (e.g. http://localhost:11434/v1 for Ollama)")
 }

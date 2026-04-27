@@ -86,6 +86,27 @@ eval "$(gpterminal init zsh)"
 eval (gpterminal init fish)
 ```
 
+### Using with Ollama (local models)
+
+GPTerminal supports any OpenAI-compatible API, including [Ollama](https://ollama.com). To use a local Ollama instance:
+
+```bash
+# Point GPTerminal to your Ollama server
+gpterminal config set-base-url http://localhost:11434/v1
+
+# Or use an environment variable
+export OPENAI_API_BASE_URL=http://localhost:11434/v1
+
+# No API key is required for Ollama
+gpterminal chat
+```
+
+To switch back to OpenAI:
+
+```bash
+gpterminal config set-base-url https://api.openai.com/v1
+```
+
 ## Usage
 
 ### Fix last command
@@ -212,6 +233,8 @@ $ gpterminal s2t --mic
 
 `gpts2t` is available as a shell alias after running `gpterminal init <shell>`. The command uses OpenAI speech-to-text models to transcribe supported audio files (`mp3`, `mp4`, `mpeg`, `mpga`, `m4a`, `wav`, `webm`) up to 25 MB. Use `--translate` to translate speech into English instead of keeping the original language.
 
+**Disclaimer:** You are solely responsible for the use of this transcription feature. Ensure you have proper authorization and consent before recording or transcribing any audio. Do not use this tool to transcribe conversations without the knowledge and explicit consent of all parties involved.
+
 For live microphone transcription, use `gpterminal s2t --mic`. This streams 24 kHz mono PCM audio to OpenAI's Realtime API and prints incremental transcript updates until you press `Ctrl+C`. Microphone mode currently supports Linux only. On Linux it now prefers `pw-record`, then `parec`, then `arecord` when ALSA exposes a real capture device, with `ffmpeg` as a final fallback. Use `--recorder` to force a backend and `--device` to target a specific source. Realtime mic mode currently supports text output only.
 
 ### GPTT2S
@@ -258,8 +281,9 @@ $ gpterminal imagine "minimal icon set for a CLI tool" --n 3 --size 1024x1024 --
 ### Configuration
 
 ```bash
-gpterminal config set-key <key>   # Save API key
-gpterminal config show            # Show current config
+gpterminal config set-key <key>          # Save API key
+gpterminal config set-base-url <url>     # Save API base URL (e.g. Ollama)
+gpterminal config show                   # Show current config
 ```
 
 Config is stored at `~/.config/gpterminal/config.yaml`.
@@ -269,6 +293,7 @@ Config is stored at `~/.config/gpterminal/config.yaml`.
 | Key | Default | Env Variable | Description |
 |-----|---------|-------------|-------------|
 | `api_key` | - | `OPENAI_API_KEY` | OpenAI API key |
+| `api_base_url` | `https://api.openai.com/v1` | `OPENAI_API_BASE_URL` | API base URL (Ollama, etc.) |
 | `model` | `gpt-4o-mini` | `OPENAI_MODEL` | Model to use |
 | `temperature` | `0.7` | - | Response creativity |
 | `max_tokens` | `2048` | - | Max response length |

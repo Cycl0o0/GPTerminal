@@ -28,7 +28,9 @@ var (
 var s2tCmd = &cobra.Command{
 	Use:   "s2t [audio-file]",
 	Short: "Transcribe speech audio into text",
-	Long:  "Transcribe supported audio files into text using OpenAI speech-to-text models, or stream live transcription from your microphone with --mic. Microphone mode currently supports Linux only.",
+	Long: `Transcribe supported audio files into text using OpenAI speech-to-text models, or stream live transcription from your microphone with --mic. Microphone mode currently supports Linux only.
+
+DISCLAIMER: You are solely responsible for the use of this transcription feature. Ensure you have proper authorization and consent before recording or transcribing any audio. Do not use this tool to transcribe conversations or audio without the knowledge and explicit consent of all parties involved. The authors of GPTerminal accept no liability for misuse.`,
 	Args: func(cmd *cobra.Command, args []string) error {
 		if s2tMic {
 			if len(args) != 0 {
@@ -61,6 +63,7 @@ var s2tCmd = &cobra.Command{
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
+			fmt.Println("\033[1;33mDisclaimer:\033[0m You are solely responsible for the use of this feature. Ensure you have authorization and consent before recording or transcribing any audio.")
 			fmt.Println("Listening from microphone. Press Ctrl+C to stop.")
 			result, err := speech.TranscribeMicrophoneRealtime(ctx, speech.RealtimeTranscriptionOptions{
 				SessionModel:       s2tRealtimeModel,
