@@ -191,3 +191,45 @@ func (c *Client) CreateImage(ctx context.Context, prompt, model, size string, n 
 	}
 	return results, nil
 }
+
+func (c *Client) CreateTranscription(ctx context.Context, request openai.AudioRequest) (openai.AudioResponse, error) {
+	if err := usage.Global().CheckBudget(); err != nil {
+		return openai.AudioResponse{}, err
+	}
+
+	resp, err := c.client.CreateTranscription(ctx, request)
+	if err != nil {
+		return openai.AudioResponse{}, fmt.Errorf("OpenAI transcription API error: %w", err)
+	}
+	return resp, nil
+}
+
+func (c *Client) CreateTranslation(ctx context.Context, request openai.AudioRequest) (openai.AudioResponse, error) {
+	if err := usage.Global().CheckBudget(); err != nil {
+		return openai.AudioResponse{}, err
+	}
+
+	resp, err := c.client.CreateTranslation(ctx, request)
+	if err != nil {
+		return openai.AudioResponse{}, fmt.Errorf("OpenAI translation API error: %w", err)
+	}
+	return resp, nil
+}
+
+func (c *Client) CreateSpeech(ctx context.Context, request openai.CreateSpeechRequest) ([]byte, error) {
+	if err := usage.Global().CheckBudget(); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.client.CreateSpeech(ctx, request)
+	if err != nil {
+		return nil, fmt.Errorf("OpenAI speech API error: %w", err)
+	}
+	defer resp.Close()
+
+	data, err := io.ReadAll(resp)
+	if err != nil {
+		return nil, fmt.Errorf("read speech audio: %w", err)
+	}
+	return data, nil
+}

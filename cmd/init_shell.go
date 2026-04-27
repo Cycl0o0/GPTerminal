@@ -36,6 +36,8 @@ const bashInit = `# GPTerminal shell integration
 alias fuck='gpterminal fix'
 alias gptchat='gpterminal chat'
 alias gptdo='gpterminal gptdo'
+alias gpts2t='gpterminal s2t'
+alias gptt2s='gpterminal t2s'
 alias risk='gpterminal risk'
 alias vibe='gpterminal vibe'
 alias gptread='gpterminal read'
@@ -49,6 +51,8 @@ const zshInit = `# GPTerminal shell integration
 alias fuck='gpterminal fix'
 alias gptchat='gpterminal chat'
 alias gptdo='gpterminal gptdo'
+alias gpts2t='gpterminal s2t'
+alias gptt2s='gpterminal t2s'
 alias risk='gpterminal risk'
 alias vibe='gpterminal vibe'
 alias gptread='gpterminal read'
@@ -67,6 +71,12 @@ function gptchat --description 'GPTerminal: AI chat'
 end
 function gptdo --description 'GPTerminal: execute an AI command plan'
     gpterminal gptdo $argv
+end
+function gpts2t --description 'GPTerminal: speech to text'
+    gpterminal s2t $argv
+end
+function gptt2s --description 'GPTerminal: text to speech'
+    gpterminal t2s $argv
 end
 function risk --description 'GPTerminal: evaluate command risk'
     gpterminal risk $argv
