@@ -1,6 +1,6 @@
 # GPTerminal
 
-AI-powered terminal assistant that integrates OpenAI GPT into your Linux terminal.
+AI-powered terminal assistant that integrates OpenAI GPT or other OpenAI API-compatible models (like Ollama) into your Linux terminal.
 
 ## Features
 
