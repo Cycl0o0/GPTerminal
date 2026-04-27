@@ -3,6 +3,7 @@ package speech
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	openai "github.com/sashabaranov/go-openai"
@@ -107,6 +108,10 @@ func TestMillisForAudioBytes(t *testing.T) {
 }
 
 func TestDetectRecorderSelection(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("pw-record auto-detection is Linux-only")
+	}
+
 	origLookPath := lookPath
 	origRunCommandOutput := runCommandOutput
 	defer func() {
@@ -134,6 +139,10 @@ func TestDetectRecorderSelection(t *testing.T) {
 }
 
 func TestDetectRecorderSkipsARecordWhenOnlyNullDeviceExists(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("arecord auto-detection is Linux-only")
+	}
+
 	origLookPath := lookPath
 	origRunCommandOutput := runCommandOutput
 	defer func() {
