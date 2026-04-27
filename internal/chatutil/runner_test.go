@@ -3,6 +3,7 @@ package chatutil
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -72,7 +73,12 @@ func TestValidateCommandArgsRejectsAbsolutePath(t *testing.T) {
 	root := t.TempDir()
 	r := &Runner{workDir: root}
 
-	if err := r.validateCommandArgs([]string{"cat", "/etc/passwd"}); err == nil {
+	absPath := "/etc/passwd"
+	if runtime.GOOS == "windows" {
+		absPath = `C:\Windows\System32\config`
+	}
+
+	if err := r.validateCommandArgs([]string{"cat", absPath}); err == nil {
 		t.Fatal("expected absolute path to be rejected")
 	}
 }

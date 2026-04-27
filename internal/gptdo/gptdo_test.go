@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -54,6 +55,10 @@ func TestExtractCWDMarker(t *testing.T) {
 }
 
 func TestExecuteCommandTracksDirectoryChanges(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("cd tracking uses bash scripts, not available on Windows")
+	}
+
 	baseDir := t.TempDir()
 	childDir := filepath.Join(baseDir, "child")
 	if err := os.Mkdir(childDir, 0755); err != nil {
