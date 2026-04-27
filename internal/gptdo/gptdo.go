@@ -10,6 +10,7 @@ import (
 
 	"github.com/cycl0o0/GPTerminal/internal/ai"
 	"github.com/cycl0o0/GPTerminal/internal/risk"
+	"github.com/cycl0o0/GPTerminal/internal/session"
 	"github.com/cycl0o0/GPTerminal/internal/system"
 	openai "github.com/sashabaranov/go-openai"
 )
@@ -25,6 +26,7 @@ type stepResponse struct {
 	Message  string   `json:"message"`
 	Done     bool     `json:"done"`
 	Commands []string `json:"commands"`
+	Rollback []string `json:"rollback"`
 	Summary  string   `json:"summary"`
 }
 
@@ -40,7 +42,7 @@ type commandExecution struct {
 	afterDir  string
 }
 
-func Run(ctx context.Context, request string) error {
+func Run(ctx context.Context, request, sessionName string) error {
 	client, err := ai.NewClient()
 	if err != nil {
 		return err
@@ -63,6 +65,43 @@ func Run(ctx context.Context, request string) error {
 	}
 
 	fmt.Printf("Request: %s\n", request)
+	return runLoop(ctx, client, &r, request, messages, sessionName)
+}
+
+func Resume(ctx context.Context, sessionName string) error {
+	record, err := session.Load(sessionName)
+	if err != nil {
+		return err
+	}
+	if record.Kind != session.KindGptDo || record.GptDo == nil {
+		return fmt.Errorf("session %q is not a gptdo session", sessionName)
+	}
+	if record.GptDo.Completed {
+		if record.GptDo.Summary != "" {
+			fmt.Println(record.GptDo.Summary)
+		}
+		return nil
+	}
+
+	client, err := ai.NewClient()
+	if err != nil {
+		return err
+	}
+	r := runner{
+		reader:      bufio.NewReader(os.Stdin),
+		autoApprove: record.GptDo.AutoApprove,
+		cwd:         record.GptDo.CWD,
+	}
+
+	fmt.Printf("Resuming session: %s\n", record.Name)
+	fmt.Printf("Request: %s\n", record.GptDo.Request)
+	return runLoop(ctx, client, &r, record.GptDo.Request, record.GptDo.Messages, record.Name)
+}
+
+func runLoop(ctx context.Context, client *ai.Client, r *runner, request string, messages []openai.ChatCompletionMessage, sessionName string) error {
+	if err := saveSession(sessionName, request, messages, r, false, ""); err != nil {
+		return err
+	}
 
 	for stepNum := 1; stepNum <= maxSteps; stepNum++ {
 		fmt.Print("Planning...")
@@ -91,6 +130,9 @@ func Run(ctx context.Context, request string) error {
 			if step.Summary != "" {
 				fmt.Printf("\n%s\n", step.Summary)
 			}
+			if err := saveSession(sessionName, request, messages, r, true, step.Summary); err != nil {
+				return err
+			}
 			return nil
 		}
 
@@ -98,7 +140,7 @@ func Run(ctx context.Context, request string) error {
 			return fmt.Errorf("AI did not return any commands")
 		}
 
-		report, err := r.runCommands(ctx, step.Commands)
+		report, err := r.runCommands(ctx, step.Commands, step.Rollback)
 		if err != nil {
 			return err
 		}
@@ -107,12 +149,15 @@ func Run(ctx context.Context, request string) error {
 			Role:    openai.ChatMessageRoleUser,
 			Content: report,
 		})
+		if err := saveSession(sessionName, request, messages, r, false, ""); err != nil {
+			return err
+		}
 	}
 
 	return fmt.Errorf("stopped after %d steps without completion", maxSteps)
 }
 
-func (r *runner) runCommands(ctx context.Context, commands []string) (string, error) {
+func (r *runner) runCommands(ctx context.Context, commands, rollbacks []string) (string, error) {
 	var report strings.Builder
 	rejected := false
 
@@ -128,6 +173,9 @@ func (r *runner) runCommands(ctx context.Context, commands []string) (string, er
 			fmt.Printf("Risk: unavailable (%v)\n", riskErr)
 		} else {
 			fmt.Printf("Risk: %d/10 [%s] %s\n", riskResult.Score, strings.ToUpper(riskResult.Level), riskResult.Summary)
+		}
+		if hint := rollbackHint(rollbacks, idx); hint != "" {
+			fmt.Printf("Rollback hint: %s\n", hint)
 		}
 
 		approved, enabledAuto, err := r.approve(command, riskResult, riskErr)
@@ -156,7 +204,7 @@ func (r *runner) runCommands(ctx context.Context, commands []string) (string, er
 		}
 
 		printCommandResult(execution)
-		report.WriteString(formatExecutedCommand(command, riskResult, execution))
+		report.WriteString(formatExecutedCommand(command, riskResult, execution, rollbackHint(rollbacks, idx)))
 
 		if !execution.result.Success {
 			break
@@ -251,6 +299,9 @@ func parseStep(raw string) (*stepResponse, error) {
 
 	for i, command := range step.Commands {
 		step.Commands[i] = strings.TrimSpace(command)
+	}
+	for i, rollback := range step.Rollback {
+		step.Rollback[i] = strings.TrimSpace(rollback)
 	}
 
 	return &step, nil
@@ -357,12 +408,15 @@ func formatRejectedCommand(command string, rr *risk.RiskResult, riskErr error) s
 	return b.String()
 }
 
-func formatExecutedCommand(command string, rr *risk.RiskResult, execution commandExecution) string {
+func formatExecutedCommand(command string, rr *risk.RiskResult, execution commandExecution, rollback string) string {
 	var b strings.Builder
 	b.WriteString("Command executed.\n")
 	b.WriteString(fmt.Sprintf("Command: %s\n", command))
 	if rr != nil {
 		b.WriteString(fmt.Sprintf("Risk: %d/10 [%s] %s\n", rr.Score, rr.Level, rr.Summary))
+	}
+	if rollback != "" {
+		b.WriteString(fmt.Sprintf("Rollback hint: %s\n", rollback))
 	}
 	b.WriteString(fmt.Sprintf("Working directory before: %s\n", execution.beforeDir))
 	b.WriteString(fmt.Sprintf("Working directory after: %s\n", execution.afterDir))
@@ -387,4 +441,29 @@ func formatExecutedCommand(command string, rr *risk.RiskResult, execution comman
 	}
 	b.WriteString("\n")
 	return b.String()
+}
+
+func rollbackHint(rollbacks []string, idx int) string {
+	if idx < 0 || idx >= len(rollbacks) {
+		return ""
+	}
+	return strings.TrimSpace(rollbacks[idx])
+}
+
+func saveSession(sessionName, request string, messages []openai.ChatCompletionMessage, r *runner, completed bool, summary string) error {
+	if strings.TrimSpace(sessionName) == "" {
+		return nil
+	}
+	return session.Save(&session.Record{
+		Kind: session.KindGptDo,
+		Name: sessionName,
+		GptDo: &session.GptDoData{
+			Request:     request,
+			Messages:    messages,
+			CWD:         r.cwd,
+			AutoApprove: r.autoApprove,
+			Completed:   completed,
+			Summary:     summary,
+		},
+	})
 }

@@ -5,13 +5,19 @@ AI-powered terminal assistant that integrates OpenAI GPT into your Linux termina
 ## Features
 
 - **Command Fix** (`gpterminal fix` / `fuck`) - AI-corrects your last failed command
-- **TUI Chat** (`gpterminal chat`) - Interactive chat with streaming responses and markdown rendering
+- **TUI Chat** (`gpterminal chat`) - Interactive chat with markdown rendering, one-shot stdin mode, and safe local tools
+- **GPTRun** (`gpterminal run "<request>"`) - One-command AI execution with review, risk checks, and optional retry
+- **GPTEdit** (`gpterminal edit <file> <instruction...>`) - AI file editing with diff preview and approval
+- **GPTReview** (`gpterminal review`) - AI review for files, repo diffs, or staged diffs
+- **GPTCommit** (`gpterminal commit`) - AI-generated commit messages from the staged diff
+- **GPTExplainDiff** (`gpterminal explain-diff`) - Plain-language explanations of git diffs
+- **GPTSessions** (`gpterminal sessions`) - List, inspect, rename, and delete saved chat or GPTDo sessions
 - **Risk Evaluation** (`gpterminal risk <cmd>`) - Color-coded danger assessment of shell commands
 - **Vibe Mode** (`gpterminal vibe "<description>"`) - Natural language to shell command translation
 - **GPTDo** (`gpterminal gptdo "<request>"`) - Multi-step AI command execution with per-command approval
 - **GPTS2T** (`gpterminal s2t <audio-file>`) - Speech-to-text transcription and optional translation
 - **GPTT2S** (`gpterminal t2s "<text>"`) - Text-to-speech audio generation
-- **GPTRead** (`gpterminal read <file> <question...>`) - AI analysis for text files, images, and PDFs
+- **GPTRead** (`gpterminal read [file] [question...]`) - AI analysis for text files, images, PDFs, and piped text
 - **GPTImagine** (`gpterminal imagine "<prompt>"`) - Image generation with OpenAI image models
 - **System-Aware** - Detects OS, kernel, shell, CPU, memory, GPU for context-aware responses
 
@@ -80,17 +86,87 @@ Command: find / -type f -size +1G 2>/dev/null
 
 ```bash
 $ gpterminal chat
+$ gpterminal chat "summarize this error"
+$ cat server.log | gpterminal chat "what are the main failures?"
+$ gpterminal chat --session bugfix
+$ gpterminal resume bugfix
 ```
 
-Opens a full-screen TUI with streaming AI responses, markdown rendering, and system context awareness.
+With no arguments, `chat` opens the full-screen TUI with markdown rendering and system context awareness. With a prompt and/or piped stdin, it runs in one-shot mode so you can use it in shell pipelines. Use `--session <name>` to save and resume a named conversation later with `gpterminal resume <name>`.
+
+The chat assistant can also use local tools during a conversation to inspect files, list directories, search text, stream responses, show thinking/tool status, run workspace commands directly from chat, and propose file writes with diff approval. Direct command execution in chat includes risk evaluation plus `yes` / `auto` / `no` approval, with auto-approve only available at or below the same `7/10` threshold used by GPTDo. File and path access is limited to the current working directory.
+
+The chat TUI now shows the active session in the header and supports:
+- `Ctrl+S` to save the current conversation into a named session
+- `Ctrl+N` to start a fresh chat
+- `Ctrl+X` to cancel the current AI response without closing the chat
+- typing `exit` to quit
+
+### GPTRun
+
+```bash
+$ gpterminal run "run the Go test suite"
+```
+
+`gptrun` generates one concrete command, shows you the command and its risk, lets you approve or edit it, then executes it. If the command fails, it can ask the AI for one retry command.
+
+### GPTEdit
+
+```bash
+$ gpterminal edit ./README.md "add a short troubleshooting section for microphone mode"
+```
+
+`gptedit` edits one target text file at a time. It asks the AI for the full updated file content, shows a diff, and only writes after you approve it.
+
+### GPTReview
+
+```bash
+$ gpterminal review ./internal/chatutil/runner.go
+$ gpterminal review
+$ gpterminal review --staged
+```
+
+`gptreview` can review a single file, the current working tree diff, or the staged diff. It prioritizes bugs, regressions, risks, and missing tests.
+
+### GPTCommit
+
+```bash
+$ gpterminal commit
+$ gpterminal commit --conventional
+$ gpterminal commit --conventional --apply
+```
+
+`gptcommit` generates a commit message from the staged diff. Use `--apply` to run `git commit` with the generated message after approval.
+
+### GPTExplainDiff
+
+```bash
+$ gpterminal explain-diff
+$ gpterminal explain-diff --staged
+```
+
+`gptexplaindiff` explains what changed in a git diff, why it matters, and likely side effects.
 
 ### GPTDo
 
 ```bash
 $ gpterminal gptdo "create a script called deploy.sh and make it executable"
+$ gpterminal gptdo --session deploy-plan "create a script called deploy.sh and make it executable"
+$ gpterminal resume deploy-plan
 ```
 
-`gptdo` asks the AI for a short ordered list of commands, evaluates risk for each command, and lets you `accept`, `auto accept`, or `reject` each step. If you enable auto-accept, commands with a risk score above `7/10` still require manual confirmation. Command output is shown to you and sent back to the AI so it can continue the task.
+`gptdo` asks the AI for a short ordered list of commands, evaluates risk for each command, and lets you `accept`, `auto accept`, or `reject` each step. If you enable auto-accept, commands with a risk score above `7/10` still require manual confirmation. Command output is shown to you and sent back to the AI so it can continue the task. GPTDo now also saves named sessions with `--session` and shows rollback hints when the AI can propose a practical undo command.
+
+### GPTSessions
+
+```bash
+$ gpterminal sessions
+$ gpterminal sessions show bugfix
+$ gpterminal sessions rename bugfix bugfix-v2
+$ gpterminal sessions delete bugfix-v2
+```
+
+`gptsessions` lists saved chat and GPTDo sessions, shows details for one session, renames sessions, and deletes sessions you no longer need.
 
 ### GPTS2T
 
@@ -121,9 +197,21 @@ $ gpterminal t2s "Read this like a calm narrator" --instructions "Speak slowly a
 $ gpterminal read ./server.log "summarize the main errors"
 $ gpterminal read ./diagram.png "describe this image"
 $ gpterminal read ./contract.pdf "list the termination clauses"
+$ gpterminal read https://example.com/docs "summarize this page"
+$ cat server.log | gpterminal read "summarize the main errors"
 ```
 
-`gptread` can analyze plain text files, supported images (`png`, `jpg`, `jpeg`, `gif`, `webp`), and PDFs. For PDFs it tries local text extraction tools such as `pdftotext` or `mutool`.
+`gptread` can analyze plain text files, supported images (`png`, `jpg`, `jpeg`, `gif`, `webp`), PDFs, remote URLs, and piped stdin text. For PDFs it tries local text extraction tools such as `pdftotext` or `mutool`.
+
+### Resume And Export
+
+```bash
+$ gpterminal resume my-chat-session
+$ gpterminal resume deploy-plan
+$ gpterminal resume deploy-plan --export
+```
+
+`gpterminal resume <session>` resumes a named chat or GPTDo session. Use `--export` to print the saved session JSON.
 
 ### GPTImagine
 

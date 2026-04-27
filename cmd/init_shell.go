@@ -36,6 +36,13 @@ const bashInit = `# GPTerminal shell integration
 alias fuck='gpterminal fix'
 alias gptchat='gpterminal chat'
 alias gptdo='gpterminal gptdo'
+alias gptrun='gpterminal run'
+alias gptedit='gpterminal edit'
+alias gptreview='gpterminal review'
+alias gptcommit='gpterminal commit'
+alias gptresume='gpterminal resume'
+alias gptexplaindiff='gpterminal explain-diff'
+alias gptsessions='gpterminal sessions'
 alias gpts2t='gpterminal s2t'
 alias gptt2s='gpterminal t2s'
 alias risk='gpterminal risk'
@@ -51,6 +58,13 @@ const zshInit = `# GPTerminal shell integration
 alias fuck='gpterminal fix'
 alias gptchat='gpterminal chat'
 alias gptdo='gpterminal gptdo'
+alias gptrun='gpterminal run'
+alias gptedit='gpterminal edit'
+alias gptreview='gpterminal review'
+alias gptcommit='gpterminal commit'
+alias gptresume='gpterminal resume'
+alias gptexplaindiff='gpterminal explain-diff'
+alias gptsessions='gpterminal sessions'
 alias gpts2t='gpterminal s2t'
 alias gptt2s='gpterminal t2s'
 alias risk='gpterminal risk'
@@ -71,6 +85,27 @@ function gptchat --description 'GPTerminal: AI chat'
 end
 function gptdo --description 'GPTerminal: execute an AI command plan'
     gpterminal gptdo $argv
+end
+function gptrun --description 'GPTerminal: generate and run one command'
+    gpterminal run $argv
+end
+function gptedit --description 'GPTerminal: AI edit a file with diff approval'
+    gpterminal edit $argv
+end
+function gptreview --description 'GPTerminal: review a file or diff'
+    gpterminal review $argv
+end
+function gptcommit --description 'GPTerminal: generate a commit message'
+    gpterminal commit $argv
+end
+function gptresume --description 'GPTerminal: resume a saved session'
+    gpterminal resume $argv
+end
+function gptsessions --description 'GPTerminal: manage saved sessions'
+    gpterminal sessions $argv
+end
+function gptexplaindiff --description 'GPTerminal: explain a git diff'
+    gpterminal explain-diff $argv
 end
 function gpts2t --description 'GPTerminal: speech to text'
     gpterminal s2t $argv

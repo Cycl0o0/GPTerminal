@@ -49,6 +49,40 @@ func (c *Client) Complete(ctx context.Context, messages []openai.ChatCompletionM
 	return resp.Choices[0].Message.Content, nil
 }
 
+func (c *Client) CreateChatCompletion(ctx context.Context, req openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error) {
+	if err := usage.Global().CheckBudget(); err != nil {
+		return openai.ChatCompletionResponse{}, err
+	}
+
+	resp, err := c.client.CreateChatCompletion(ctx, req)
+	if err != nil {
+		return openai.ChatCompletionResponse{}, fmt.Errorf("OpenAI API error: %w", err)
+	}
+	usage.Global().RecordUsage(req.Model, resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
+	usage.Global().WarnIfNeeded()
+	return resp, nil
+}
+
+func (c *Client) CreateChatCompletionStream(ctx context.Context, req openai.ChatCompletionRequest) (*openai.ChatCompletionStream, error) {
+	if err := usage.Global().CheckBudget(); err != nil {
+		return nil, err
+	}
+
+	stream, err := c.client.CreateChatCompletionStream(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("OpenAI stream error: %w", err)
+	}
+	return stream, nil
+}
+
+func (c *Client) RecordUsage(model string, usageData *openai.Usage) {
+	if usageData == nil {
+		return
+	}
+	usage.Global().RecordUsage(model, usageData.PromptTokens, usageData.CompletionTokens)
+	usage.Global().WarnIfNeeded()
+}
+
 func (c *Client) StreamComplete(ctx context.Context, messages []openai.ChatCompletionMessage, onChunk func(string)) (string, error) {
 	if err := usage.Global().CheckBudget(); err != nil {
 		return "", err

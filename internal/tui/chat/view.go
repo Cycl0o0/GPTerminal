@@ -15,7 +15,7 @@ func (m Model) View() string {
 
 	// Header bar
 	title := headerStyle.Render("GPTerminal Chat")
-	info := headerInfoStyle.Render(fmt.Sprintf("%s | %d messages", m.sysInfo.OS, m.msgCount))
+	info := headerInfoStyle.Render(m.headerInfo())
 	header := lipgloss.JoinHorizontal(lipgloss.Center, title, info)
 
 	// Divider
@@ -23,12 +23,18 @@ func (m Model) View() string {
 
 	// Status bar
 	var status string
-	if m.streaming {
-		status = streamingStyle.Render("● AI is responding...")
+	if m.pendingApproval != nil {
+		status = statusStyle.Render(approvalStatus(m.pendingApproval))
+	} else if m.streaming && m.thinkingText != "" {
+		status = streamingStyle.Render(compactLine("Thinking: " + m.thinkingText))
+	} else if m.streaming {
+		status = streamingStyle.Render("● AI is responding... Ctrl+X to cancel")
 	} else if m.err != nil {
 		status = errorStyle.Render(fmt.Sprintf("✗ Error: %v", m.err))
+	} else if m.notice != "" {
+		status = statusStyle.Render(m.notice)
 	} else {
-		status = statusStyle.Render("Enter send • Ctrl+N new chat • Ctrl+C quit")
+		status = statusStyle.Render("Enter send • Ctrl+S save session • Ctrl+N new chat • Ctrl+C quit")
 	}
 
 	// Input
@@ -46,7 +52,11 @@ func (m Model) View() string {
 
 func (m Model) renderMessages() string {
 	if len(m.messages) == 0 && !m.streaming {
-		return welcomeStyle.Render("Welcome to GPTerminal Chat!\nAsk anything about your system, commands, or programming.")
+		sessionLine := "Session mode: ad-hoc"
+		if m.sessionName != "" {
+			sessionLine = "Session mode: " + m.sessionName
+		}
+		return welcomeStyle.Render("Welcome to GPTerminal Chat!\nAsk about your system, code, or commands.\n" + sessionLine + "\nShortcuts: Ctrl+S save session, Ctrl+N new chat, Ctrl+C quit.")
 	}
 
 	var sb strings.Builder
@@ -79,6 +89,14 @@ func (m Model) renderMessages() string {
 			sb.WriteString(fmt.Sprintf("%s\n", label))
 			sb.WriteString(assistantMsgStyle.Render(m.streamBuf + "█"))
 			sb.WriteString("\n")
+		} else if m.pendingApproval != nil {
+			sb.WriteString(fmt.Sprintf("%s\n", label))
+			sb.WriteString(assistantMsgStyle.Render(renderApprovalPrompt(m.pendingApproval)))
+			sb.WriteString("\n")
+		} else if m.thinkingText != "" {
+			sb.WriteString(fmt.Sprintf("%s\n", label))
+			sb.WriteString(assistantMsgStyle.Render(compactLine(m.thinkingText) + " █"))
+			sb.WriteString("\n")
 		} else {
 			sb.WriteString(fmt.Sprintf("%s %s\n", label, streamingStyle.Render("thinking...")))
 		}
@@ -107,4 +125,72 @@ func (m *Model) updateRenderer() {
 		glamour.WithStylePath("dark"),
 		glamour.WithWordWrap(width),
 	)
+}
+
+func approvalStatus(p *approvalPrompt) string {
+	if p == nil {
+		return ""
+	}
+	if p.allowAuto {
+		return "Approval required: type yes, auto, or no"
+	}
+	return "Approval required: type yes or no"
+}
+
+func renderApprovalPrompt(p *approvalPrompt) string {
+	if p == nil {
+		return ""
+	}
+
+	var b strings.Builder
+	switch p.kind {
+	case "command":
+		b.WriteString("Approval required for command:\n")
+		b.WriteString("```text\n")
+		b.WriteString(p.command)
+		b.WriteString("\n```\n")
+		if p.risk != "" {
+			b.WriteString("\n")
+			b.WriteString(p.risk)
+			b.WriteString("\n")
+		}
+	case "write_file":
+		b.WriteString("Approval required for file write: `")
+		b.WriteString(p.path)
+		b.WriteString("`\n\n```diff\n")
+		b.WriteString(p.diff)
+		b.WriteString("\n```\n")
+	}
+
+	if p.allowAuto {
+		b.WriteString("\nType `yes`, `auto`, or `no`.")
+	} else {
+		b.WriteString("\nType `yes` or `no`.")
+	}
+	return b.String()
+}
+
+func compactLine(s string) string {
+	s = strings.TrimSpace(strings.ReplaceAll(s, "\n", " "))
+	if len(s) > 120 {
+		return s[:120] + "..."
+	}
+	return s
+}
+
+func (m Model) headerInfo() string {
+	parts := []string{m.sysInfo.OS}
+	if m.sessionName != "" {
+		parts = append(parts, "session:"+m.sessionName)
+	} else {
+		parts = append(parts, "session:ad-hoc")
+	}
+	if m.autoApproveCommands {
+		parts = append(parts, "auto-approve:on")
+	}
+	parts = append(parts, fmt.Sprintf("%d messages", m.msgCount))
+	if m.sysInfo.WorkDir != "" {
+		parts = append(parts, compactLine(m.sysInfo.WorkDir))
+	}
+	return strings.Join(parts, " | ")
 }

@@ -9,7 +9,10 @@ import (
 
 func isOwnCommand(cmd string) bool {
 	lower := strings.ToLower(strings.TrimSpace(cmd))
-	skipPrefixes := []string{"gpterminal", "fuck", "gptchat", "gptdo"}
+	skipPrefixes := []string{
+		"gpterminal", "fuck", "gptchat", "gptdo", "gptrun", "gptedit",
+		"gptreview", "gptcommit", "gptresume", "gptexplaindiff", "gptsessions",
+	}
 	for _, prefix := range skipPrefixes {
 		if strings.HasPrefix(lower, prefix) {
 			return true
