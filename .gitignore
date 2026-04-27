@@ -18,5 +18,8 @@ config.yaml
 # Chat history
 chat_history.json
 
+# Usage tracking
+usage.json
+
 # Go
 vendor/

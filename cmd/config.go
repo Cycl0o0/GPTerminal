@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/cycl0o0/GPTerminal/internal/config"
+	"github.com/cycl0o0/GPTerminal/internal/usage"
 	"github.com/spf13/cobra"
 )
 
@@ -46,8 +47,33 @@ var showConfigCmd = &cobra.Command{
 	},
 }
 
+var usageCmd = &cobra.Command{
+	Use:   "usage",
+	Short: "Show API usage and cost for the current month",
+	Run: func(cmd *cobra.Command, args []string) {
+		u := usage.Global().CurrentUsage()
+		fmt.Printf("Month:           %s\n", u.Month)
+		fmt.Printf("API Calls:       %d\n", u.Calls)
+		fmt.Printf("Input Tokens:    %d\n", u.InputTokens)
+		fmt.Printf("Output Tokens:   %d\n", u.OutputTokens)
+		fmt.Printf("Images Generated:%d\n", u.ImagesGen)
+		fmt.Printf("Chat Cost:       $%.4f\n", u.TotalCost-u.ImageCost)
+		fmt.Printf("Image Cost:      $%.4f\n", u.ImageCost)
+		fmt.Printf("Total Cost:      $%.4f\n", u.TotalCost)
+
+		limit := config.CostLimit()
+		if limit > 0 {
+			pct := (u.TotalCost / limit) * 100
+			fmt.Printf("Budget Limit:    $%.2f (%.1f%% used)\n", limit, pct)
+		} else {
+			fmt.Println("Budget Limit:    unlimited")
+		}
+	},
+}
+
 func init() {
 	configCmd.AddCommand(setKeyCmd)
 	configCmd.AddCommand(showConfigCmd)
+	configCmd.AddCommand(usageCmd)
 	rootCmd.AddCommand(configCmd)
 }

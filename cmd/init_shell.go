@@ -35,8 +35,11 @@ func init() {
 const bashInit = `# GPTerminal shell integration
 alias fuck='gpterminal fix'
 alias gptchat='gpterminal chat'
+alias gptdo='gpterminal gptdo'
 alias risk='gpterminal risk'
 alias vibe='gpterminal vibe'
+alias gptread='gpterminal read'
+alias gptimagine='gpterminal imagine'
 
 # Flush history after each command for reliable fix
 export PROMPT_COMMAND="history -a;${PROMPT_COMMAND}"
@@ -45,8 +48,11 @@ export PROMPT_COMMAND="history -a;${PROMPT_COMMAND}"
 const zshInit = `# GPTerminal shell integration
 alias fuck='gpterminal fix'
 alias gptchat='gpterminal chat'
+alias gptdo='gpterminal gptdo'
 alias risk='gpterminal risk'
 alias vibe='gpterminal vibe'
+alias gptread='gpterminal read'
+alias gptimagine='gpterminal imagine'
 
 # Flush history after each command for reliable fix
 setopt INC_APPEND_HISTORY
@@ -59,10 +65,19 @@ end
 function gptchat --description 'GPTerminal: AI chat'
     gpterminal chat
 end
+function gptdo --description 'GPTerminal: execute an AI command plan'
+    gpterminal gptdo $argv
+end
 function risk --description 'GPTerminal: evaluate command risk'
     gpterminal risk $argv
 end
 function vibe --description 'GPTerminal: natural language to command'
     gpterminal vibe $argv
+end
+function gptread --description 'GPTerminal: analyze a file with AI'
+    gpterminal read $argv
+end
+function gptimagine --description 'GPTerminal: generate an image'
+    gpterminal imagine $argv
 end
 `

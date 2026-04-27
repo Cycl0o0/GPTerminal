@@ -9,9 +9,13 @@ import (
 )
 
 const (
-	DefaultModel     = "gpt-4o-mini"
-	DefaultTemp      = 0.7
-	DefaultMaxTokens = 2048
+	DefaultModel      = "gpt-4o-mini"
+	DefaultTemp       = 0.7
+	DefaultMaxTokens  = 2048
+	DefaultCostLimit  = 0.0 // 0 = unlimited
+	DefaultWarnPct    = 80.0
+	DefaultImageModel = "gpt-image-1"
+	DefaultImageSize  = "1024x1024"
 )
 
 func Init() {
@@ -24,6 +28,10 @@ func Init() {
 	viper.SetDefault("model", DefaultModel)
 	viper.SetDefault("temperature", DefaultTemp)
 	viper.SetDefault("max_tokens", DefaultMaxTokens)
+	viper.SetDefault("cost_limit", DefaultCostLimit)
+	viper.SetDefault("warn_threshold", DefaultWarnPct)
+	viper.SetDefault("image_model", DefaultImageModel)
+	viper.SetDefault("image_size", DefaultImageSize)
 
 	viper.SetEnvPrefix("OPENAI")
 	viper.BindEnv("api_key")
@@ -59,6 +67,22 @@ func Temperature() float32 {
 
 func MaxTokens() int {
 	return viper.GetInt("max_tokens")
+}
+
+func CostLimit() float64 {
+	return viper.GetFloat64("cost_limit")
+}
+
+func WarnThreshold() float64 {
+	return viper.GetFloat64("warn_threshold")
+}
+
+func ImageModel() string {
+	return viper.GetString("image_model")
+}
+
+func ImageSize() string {
+	return viper.GetString("image_size")
 }
 
 func SaveAPIKey(key string) error {

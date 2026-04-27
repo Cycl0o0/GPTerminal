@@ -9,7 +9,7 @@ import (
 
 func isOwnCommand(cmd string) bool {
 	lower := strings.ToLower(strings.TrimSpace(cmd))
-	skipPrefixes := []string{"gpterminal", "fuck", "gptchat"}
+	skipPrefixes := []string{"gpterminal", "fuck", "gptchat", "gptdo"}
 	for _, prefix := range skipPrefixes {
 		if strings.HasPrefix(lower, prefix) {
 			return true
@@ -68,8 +68,8 @@ func LastCommand() (string, error) {
 
 // lastFishCommand parses fish_history which uses a multi-line YAML-like format:
 //
-//	- cmd: some command
-//	  when: 1234567890
+//   - cmd: some command
+//     when: 1234567890
 func lastFishCommand(home string) (string, error) {
 	histFile := filepath.Join(home, ".local", "share", "fish", "fish_history")
 	data, err := os.ReadFile(histFile)

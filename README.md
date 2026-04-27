@@ -8,6 +8,9 @@ AI-powered terminal assistant that integrates OpenAI GPT into your Linux termina
 - **TUI Chat** (`gpterminal chat`) - Interactive chat with streaming responses and markdown rendering
 - **Risk Evaluation** (`gpterminal risk <cmd>`) - Color-coded danger assessment of shell commands
 - **Vibe Mode** (`gpterminal vibe "<description>"`) - Natural language to shell command translation
+- **GPTDo** (`gpterminal gptdo "<request>"`) - Multi-step AI command execution with per-command approval
+- **GPTRead** (`gpterminal read <file> <question...>`) - AI analysis for text files, images, and PDFs
+- **GPTImagine** (`gpterminal imagine "<prompt>"`) - Image generation with OpenAI image models
 - **System-Aware** - Detects OS, kernel, shell, CPU, memory, GPU for context-aware responses
 
 ## Installation
@@ -78,6 +81,33 @@ $ gpterminal chat
 ```
 
 Opens a full-screen TUI with streaming AI responses, markdown rendering, and system context awareness.
+
+### GPTDo
+
+```bash
+$ gpterminal gptdo "create a script called deploy.sh and make it executable"
+```
+
+`gptdo` asks the AI for a short ordered list of commands, evaluates risk for each command, and lets you `accept`, `auto accept`, or `reject` each step. If you enable auto-accept, commands with a risk score above `7/10` still require manual confirmation. Command output is shown to you and sent back to the AI so it can continue the task.
+
+### GPTRead
+
+```bash
+$ gpterminal read ./server.log "summarize the main errors"
+$ gpterminal read ./diagram.png "describe this image"
+$ gpterminal read ./contract.pdf "list the termination clauses"
+```
+
+`gptread` can analyze plain text files, supported images (`png`, `jpg`, `jpeg`, `gif`, `webp`), and PDFs. For PDFs it tries local text extraction tools such as `pdftotext` or `mutool`.
+
+### GPTImagine
+
+```bash
+$ gpterminal imagine "a retro-futuristic terminal cockpit at sunrise"
+$ gpterminal imagine "minimal icon set for a CLI tool" --n 3 --size 1024x1024 --output ./artifacts
+```
+
+`gptimagine` generates images with OpenAI image models and saves them to disk. You can choose the model, image size, image count, and output directory with flags.
 
 ### Configuration
 
