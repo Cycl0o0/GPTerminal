@@ -24,9 +24,9 @@ func Run(ctx context.Context, description string, autoYes bool) error {
 		{Role: openai.ChatMessageRoleUser, Content: description},
 	}
 
-	fmt.Print("Generating command...")
+	fmt.Fprint(os.Stderr, "Generating command...")
 	resp, err := client.Complete(ctx, messages)
-	fmt.Print("\r                     \r")
+	fmt.Fprint(os.Stderr, "\r                     \r")
 	if err != nil {
 		return err
 	}
