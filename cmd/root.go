@@ -11,7 +11,7 @@ import (
 var rootCmd = &cobra.Command{
 	Use:   "gpterminal",
 	Short: "GPTerminal - AI-powered terminal assistant",
-	Long:  "GPTerminal seamlessly integrates OpenAI GPT into your Linux terminal.\nCommand correction, TUI chat, risk evaluation, and natural language commands.\n\nMade with <3 by Cycl0o0",
+	Long:  "GPTerminal seamlessly integrates OpenAI GPT or other OpenAI API-compatible models (like Ollama) into your Linux terminal.\nCommand correction, TUI chat, risk evaluation, and natural language commands.\n\nMade with <3 by Cycl0o0",
 }
 
 func Execute() {
