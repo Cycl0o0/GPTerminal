@@ -11,6 +11,7 @@ import (
 )
 
 var sessionsJSON bool
+var sessionsMarkdown bool
 var sessionsForce bool
 
 var sessionsCmd = &cobra.Command{
@@ -53,6 +54,16 @@ var sessionsShowCmd = &cobra.Command{
 				os.Exit(1)
 			}
 			fmt.Println(string(data))
+			return
+		}
+
+		if sessionsMarkdown {
+			md, err := session.ExportMarkdown(args[0])
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			fmt.Print(md)
 			return
 		}
 
@@ -106,6 +117,7 @@ var sessionsDeleteCmd = &cobra.Command{
 
 func init() {
 	sessionsShowCmd.Flags().BoolVar(&sessionsJSON, "json", false, "Print the raw saved session JSON")
+	sessionsShowCmd.Flags().BoolVar(&sessionsMarkdown, "markdown", false, "Export session as readable markdown")
 	sessionsDeleteCmd.Flags().BoolVar(&sessionsForce, "force", false, "Delete without confirmation")
 
 	sessionsCmd.AddCommand(sessionsListCmd, sessionsShowCmd, sessionsRenameCmd, sessionsDeleteCmd)

@@ -24,6 +24,12 @@ jobs:
           - os: macos-latest
             goos: darwin
             goarch: arm64
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+          - os: windows-latest
+            goos: windows
+            goarch: arm64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -36,13 +42,15 @@ jobs:
         run: go test ./...
 
       - name: Build
+        shell: bash
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
           bin="gpterminal-${{ matrix.goos }}-${{ matrix.goarch }}"
-          go build -ldflags="-s -w" -o "$bin" .
-          tar czf "${bin}.tar.gz" "$bin" LICENSE
+          ext=""; if [ "${{ matrix.goos }}" = "windows" ]; then ext=".exe"; fi
+          go build -ldflags="-s -w" -o "${bin}${ext}" .
+          tar czf "${bin}.tar.gz" "${bin}${ext}" LICENSE
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

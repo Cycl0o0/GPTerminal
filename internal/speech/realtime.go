@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -232,19 +233,35 @@ func streamMicrophoneAudio(ctx context.Context, ws *websocket.Conn, recorder, de
 func detectRecorder(preference, device string) (*recorderSpec, error) {
 	switch strings.ToLower(strings.TrimSpace(preference)) {
 	case "", "auto":
-		if _, err := lookPath("pw-record"); err == nil {
-			return buildPWRecordSpec(device), nil
+		switch runtime.GOOS {
+		case "darwin":
+			if _, err := lookPath("sox"); err == nil {
+				return buildSoxDarwinSpec(device), nil
+			}
+			if _, err := lookPath("ffmpeg"); err == nil {
+				return buildFFmpegDarwinSpec(device), nil
+			}
+			return nil, fmt.Errorf("no supported microphone recorder found on macOS; install sox (brew install sox) or ffmpeg")
+		case "windows":
+			if _, err := lookPath("ffmpeg"); err == nil {
+				return buildFFmpegWindowsSpec(device), nil
+			}
+			return nil, fmt.Errorf("no supported microphone recorder found on Windows; install ffmpeg")
+		default: // linux and others
+			if _, err := lookPath("pw-record"); err == nil {
+				return buildPWRecordSpec(device), nil
+			}
+			if _, err := lookPath("parec"); err == nil {
+				return buildParecSpec(device), nil
+			}
+			if _, err := lookPath("arecord"); err == nil && hasUsableARecordDevice() {
+				return buildARecordSpec(device), nil
+			}
+			if _, err := lookPath("ffmpeg"); err == nil {
+				return buildFFmpegSpec(device), nil
+			}
+			return nil, fmt.Errorf("no supported microphone recorder found; install pw-record, parec, arecord, sox, or ffmpeg")
 		}
-		if _, err := lookPath("parec"); err == nil {
-			return buildParecSpec(device), nil
-		}
-		if _, err := lookPath("arecord"); err == nil && hasUsableARecordDevice() {
-			return buildARecordSpec(device), nil
-		}
-		if _, err := lookPath("ffmpeg"); err == nil {
-			return buildFFmpegSpec(device), nil
-		}
-		return nil, fmt.Errorf("no supported microphone recorder found; install pw-record, parec, arecord, or ffmpeg")
 	case "pw-record":
 		if _, err := lookPath("pw-record"); err != nil {
 			return nil, fmt.Errorf("pw-record not found in PATH")
@@ -260,13 +277,25 @@ func detectRecorder(preference, device string) (*recorderSpec, error) {
 			return nil, fmt.Errorf("arecord not found in PATH")
 		}
 		return buildARecordSpec(device), nil
+	case "sox":
+		if _, err := lookPath("sox"); err != nil {
+			return nil, fmt.Errorf("sox not found in PATH")
+		}
+		return buildSoxDarwinSpec(device), nil
 	case "ffmpeg":
 		if _, err := lookPath("ffmpeg"); err != nil {
 			return nil, fmt.Errorf("ffmpeg not found in PATH")
 		}
-		return buildFFmpegSpec(device), nil
+		switch runtime.GOOS {
+		case "darwin":
+			return buildFFmpegDarwinSpec(device), nil
+		case "windows":
+			return buildFFmpegWindowsSpec(device), nil
+		default:
+			return buildFFmpegSpec(device), nil
+		}
 	default:
-		return nil, fmt.Errorf("unsupported recorder %q (use auto, pw-record, parec, arecord, or ffmpeg)", preference)
+		return nil, fmt.Errorf("unsupported recorder %q (use auto, pw-record, parec, arecord, sox, or ffmpeg)", preference)
 	}
 }
 
@@ -321,6 +350,51 @@ func buildFFmpegSpec(device string) *recorderSpec {
 			"-hide_banner", "-loglevel", "error",
 			"-f", "pulse",
 			"-i", source,
+			"-ac", "1",
+			"-ar", "24000",
+			"-f", "s16le",
+			"-acodec", "pcm_s16le",
+			"-",
+		},
+	}
+}
+
+func buildSoxDarwinSpec(device string) *recorderSpec {
+	args := []string{"-d", "-t", "raw", "-r", "24000", "-c", "1", "-b", "16", "-e", "signed-integer", "-"}
+	return &recorderSpec{name: "sox", args: args}
+}
+
+func buildFFmpegDarwinSpec(device string) *recorderSpec {
+	source := strings.TrimSpace(device)
+	if source == "" {
+		source = ":default"
+	}
+	return &recorderSpec{
+		name: "ffmpeg",
+		args: []string{
+			"-hide_banner", "-loglevel", "error",
+			"-f", "avfoundation",
+			"-i", source,
+			"-ac", "1",
+			"-ar", "24000",
+			"-f", "s16le",
+			"-acodec", "pcm_s16le",
+			"-",
+		},
+	}
+}
+
+func buildFFmpegWindowsSpec(device string) *recorderSpec {
+	source := strings.TrimSpace(device)
+	if source == "" {
+		source = "Microphone"
+	}
+	return &recorderSpec{
+		name: "ffmpeg",
+		args: []string{
+			"-hide_banner", "-loglevel", "error",
+			"-f", "dshow",
+			"-i", "audio=" + source,
 			"-ac", "1",
 			"-ar", "24000",
 			"-f", "s16le",

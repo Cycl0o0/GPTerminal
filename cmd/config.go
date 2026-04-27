@@ -2,11 +2,19 @@ package cmd
 
 import (
 	"fmt"
+	"net/url"
 	"os"
+	"sort"
+	"time"
 
 	"github.com/cycl0o0/GPTerminal/internal/config"
 	"github.com/cycl0o0/GPTerminal/internal/usage"
 	"github.com/spf13/cobra"
+)
+
+var (
+	usageDaily  bool
+	usageWeekly bool
 )
 
 var configCmd = &cobra.Command{
@@ -33,8 +41,20 @@ var setBaseURLCmd = &cobra.Command{
 	Short: "Save the API base URL to config (e.g. http://localhost:11434/v1 for Ollama)",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		url := args[0]
-		if err := config.SaveAPIBaseURL(url); err != nil {
+		rawURL := args[0]
+
+		// Validate URL format before saving
+		u, err := url.ParseRequestURI(rawURL)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %q is not a valid URL: %v\n", rawURL, err)
+			os.Exit(1)
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			fmt.Fprintf(os.Stderr, "Error: %q must use http or https scheme\n", rawURL)
+			os.Exit(1)
+		}
+
+		if err := config.SaveAPIBaseURL(rawURL); err != nil {
 			fmt.Fprintln(os.Stderr, "Error saving API base URL:", err)
 			os.Exit(1)
 		}
@@ -59,6 +79,14 @@ var showConfigCmd = &cobra.Command{
 		fmt.Printf("Temperature: %.1f\n", config.Temperature())
 		fmt.Printf("Max Tokens: %d\n", config.MaxTokens())
 		fmt.Printf("Config file: %s\n", config.ConfigFile())
+
+		// Print validation warnings
+		if warnings := config.Validate(); len(warnings) > 0 {
+			fmt.Fprintln(os.Stderr)
+			for _, w := range warnings {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+			}
+		}
 	},
 }
 
@@ -67,6 +95,42 @@ var usageCmd = &cobra.Command{
 	Short: "Show API usage and cost for the current month",
 	Run: func(cmd *cobra.Command, args []string) {
 		u := usage.Global().CurrentUsage()
+
+		if usageDaily {
+			keys := sortedKeys(u.DailyCosts)
+			if len(keys) == 0 {
+				fmt.Println("No daily cost data recorded yet.")
+				return
+			}
+			for _, day := range keys {
+				fmt.Printf("%s: $%.4f\n", day, u.DailyCosts[day])
+			}
+			return
+		}
+
+		if usageWeekly {
+			keys := sortedKeys(u.DailyCosts)
+			if len(keys) == 0 {
+				fmt.Println("No daily cost data recorded yet.")
+				return
+			}
+			weeks := map[string]float64{}
+			for _, day := range keys {
+				t, err := time.Parse("2006-01-02", day)
+				if err != nil {
+					continue
+				}
+				year, week := t.ISOWeek()
+				key := fmt.Sprintf("%d-W%02d", year, week)
+				weeks[key] += u.DailyCosts[day]
+			}
+			weekKeys := sortedKeys(weeks)
+			for _, wk := range weekKeys {
+				fmt.Printf("%s: $%.4f\n", wk, weeks[wk])
+			}
+			return
+		}
+
 		fmt.Printf("Month:           %s\n", u.Month)
 		fmt.Printf("API Calls:       %d\n", u.Calls)
 		fmt.Printf("Input Tokens:    %d\n", u.InputTokens)
@@ -86,7 +150,19 @@ var usageCmd = &cobra.Command{
 	},
 }
 
+func sortedKeys(m map[string]float64) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func init() {
+	usageCmd.Flags().BoolVar(&usageDaily, "daily", false, "Show daily cost breakdown")
+	usageCmd.Flags().BoolVar(&usageWeekly, "weekly", false, "Show weekly cost breakdown")
+
 	configCmd.AddCommand(setKeyCmd)
 	configCmd.AddCommand(setBaseURLCmd)
 	configCmd.AddCommand(showConfigCmd)

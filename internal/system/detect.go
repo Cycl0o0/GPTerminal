@@ -61,35 +61,25 @@ func (s SystemInfo) ContextBlock() string {
 	return fmt.Sprintf("[System Context]\n%s", s.String())
 }
 
-func detectOS() string {
-	data, err := os.ReadFile("/etc/os-release")
-	if err != nil {
-		return runtime.GOOS
-	}
-	var name, version string
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "PRETTY_NAME=") {
-			return strings.Trim(strings.TrimPrefix(line, "PRETTY_NAME="), "\"")
-		}
-		if strings.HasPrefix(line, "NAME=") {
-			name = strings.Trim(strings.TrimPrefix(line, "NAME="), "\"")
-		}
-		if strings.HasPrefix(line, "VERSION=") {
-			version = strings.Trim(strings.TrimPrefix(line, "VERSION="), "\"")
-		}
-	}
-	if name != "" {
-		return strings.TrimSpace(name + " " + version)
-	}
-	return runtime.GOOS
-}
-
 func detectShell() (string, string) {
 	shellPath := os.Getenv("SHELL")
 	if shellPath == "" {
+		// On Windows, check COMSPEC or PSModulePath
+		if runtime.GOOS == "windows" {
+			if os.Getenv("PSModulePath") != "" {
+				return "powershell", ""
+			}
+			if comspec := os.Getenv("COMSPEC"); comspec != "" {
+				return "cmd", ""
+			}
+		}
 		return "unknown", ""
 	}
-	shell := shellPath[strings.LastIndex(shellPath, "/")+1:]
+	sep := "/"
+	if runtime.GOOS == "windows" {
+		sep = "\\"
+	}
+	shell := shellPath[strings.LastIndex(shellPath, sep)+1:]
 	ver := run(shellPath, "--version")
 	if idx := strings.IndexByte(ver, '\n'); idx > 0 {
 		ver = ver[:idx]
@@ -97,66 +87,7 @@ func detectShell() (string, string) {
 	return shell, ver
 }
 
-func detectCPU() (string, string) {
-	data, err := os.ReadFile("/proc/cpuinfo")
-	if err != nil {
-		return "unknown", "0"
-	}
-	var model string
-	cores := 0
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "model name") && model == "" {
-			parts := strings.SplitN(line, ":", 2)
-			if len(parts) == 2 {
-				model = strings.TrimSpace(parts[1])
-			}
-		}
-		if strings.HasPrefix(line, "processor") {
-			cores++
-		}
-	}
-	if model == "" {
-		model = "unknown"
-	}
-	return model, fmt.Sprintf("%d", cores)
-}
-
-func detectMemory() (string, string) {
-	data, err := os.ReadFile("/proc/meminfo")
-	if err != nil {
-		return "unknown", "unknown"
-	}
-	var total, avail string
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "MemTotal:") {
-			total = strings.TrimSpace(strings.TrimPrefix(line, "MemTotal:"))
-		}
-		if strings.HasPrefix(line, "MemAvailable:") {
-			avail = strings.TrimSpace(strings.TrimPrefix(line, "MemAvailable:"))
-		}
-	}
-	return total, avail
-}
-
-func detectGPU() string {
-	out := run("lspci")
-	if out == "" {
-		return ""
-	}
-	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(strings.ToLower(line), "vga") {
-			parts := strings.SplitN(line, ": ", 2)
-			if len(parts) == 2 {
-				return strings.TrimSpace(parts[1])
-			}
-			return strings.TrimSpace(line)
-		}
-	}
-	return ""
-}
-
 func detectLocale() string {
-	// LANG is the primary locale indicator
 	if lang := os.Getenv("LANG"); lang != "" {
 		return lang
 	}
@@ -166,7 +97,6 @@ func detectLocale() string {
 	if lc := os.Getenv("LC_MESSAGES"); lc != "" {
 		return lc
 	}
-	// Fallback to locale command
 	if out := run("locale"); out != "" {
 		for _, line := range strings.Split(out, "\n") {
 			if strings.HasPrefix(line, "LANG=") {

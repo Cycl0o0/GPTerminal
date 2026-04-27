@@ -12,7 +12,7 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 )
 
-func Run(ctx context.Context, description string) error {
+func Run(ctx context.Context, description string, autoYes bool) error {
 	client, err := ai.NewClient()
 	if err != nil {
 		return err
@@ -39,6 +39,18 @@ func Run(ctx context.Context, description string) error {
 	command = strings.TrimSuffix(command, "```")
 	command = strings.TrimSpace(command)
 
+	// Auto-yes mode: print and execute without prompting
+	if autoYes {
+		fmt.Println(command)
+		return system.Execute(command)
+	}
+
+	// Non-TTY stdout: just print the raw command
+	if !isStdoutTTY() {
+		fmt.Println(command)
+		return nil
+	}
+
 	fmt.Printf("Command: \033[1;36m%s\033[0m\n", command)
 	fmt.Print("[Y]es / [n]o / [e]dit: ")
 
@@ -62,4 +74,12 @@ func Run(ctx context.Context, description string) error {
 		fmt.Println("Aborted.")
 		return nil
 	}
+}
+
+func isStdoutTTY() bool {
+	info, err := os.Stdout.Stat()
+	if err != nil {
+		return true
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }

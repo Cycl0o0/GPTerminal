@@ -241,6 +241,69 @@ func preview(s string) string {
 	return s
 }
 
+// ExportMarkdown renders a session as a readable markdown document.
+func ExportMarkdown(name string) (string, error) {
+	record, err := Load(name)
+	if err != nil {
+		return "", err
+	}
+
+	var b strings.Builder
+
+	switch record.Kind {
+	case KindChat:
+		b.WriteString(fmt.Sprintf("# Chat Session: %s\n\n", record.Name))
+		b.WriteString(fmt.Sprintf("**Date:** %s\n\n", record.UpdatedAt.Local().Format(time.RFC1123)))
+		b.WriteString("---\n\n")
+
+		if record.Chat != nil {
+			for _, msg := range record.Chat.Transcript {
+				if msg.Role == "system" || strings.TrimSpace(msg.Content) == "" {
+					continue
+				}
+				ts := ""
+				if msg.Timestamp != "" {
+					ts = " — " + msg.Timestamp
+				}
+				b.WriteString(fmt.Sprintf("### %s%s\n\n", msg.Role, ts))
+				b.WriteString(msg.Content)
+				b.WriteString("\n\n")
+			}
+		}
+
+	case KindGptDo:
+		b.WriteString(fmt.Sprintf("# GPTDo Session: %s\n\n", record.Name))
+		b.WriteString(fmt.Sprintf("**Date:** %s\n\n", record.UpdatedAt.Local().Format(time.RFC1123)))
+
+		if record.GptDo != nil {
+			b.WriteString(fmt.Sprintf("**Request:** %s\n\n", record.GptDo.Request))
+			b.WriteString(fmt.Sprintf("**Working Directory:** %s\n\n", record.GptDo.CWD))
+			status := "in progress"
+			if record.GptDo.Completed {
+				status = "completed"
+			}
+			b.WriteString(fmt.Sprintf("**Status:** %s\n\n", status))
+			b.WriteString("---\n\n")
+
+			for _, msg := range record.GptDo.Messages {
+				if msg.Role == "system" || strings.TrimSpace(msg.Content) == "" {
+					continue
+				}
+				b.WriteString(fmt.Sprintf("### %s\n\n", msg.Role))
+				b.WriteString(msg.Content)
+				b.WriteString("\n\n")
+			}
+
+			if strings.TrimSpace(record.GptDo.Summary) != "" {
+				b.WriteString("---\n\n")
+				b.WriteString(fmt.Sprintf("**Summary:** %s\n", record.GptDo.Summary))
+			}
+		}
+	}
+
+	return b.String(), nil
+}
+
 func sortEntries(entries []Entry) {
 	for i := 0; i < len(entries); i++ {
 		for j := i + 1; j < len(entries); j++ {

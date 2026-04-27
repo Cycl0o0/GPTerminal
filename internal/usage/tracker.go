@@ -13,13 +13,14 @@ import (
 
 // UsageData holds tracked API spend for the current month.
 type UsageData struct {
-	Month        string  `json:"month"`
-	TotalCost    float64 `json:"total_cost"`
-	InputTokens  int     `json:"input_tokens"`
-	OutputTokens int     `json:"output_tokens"`
-	Calls        int     `json:"calls"`
-	ImageCost    float64 `json:"image_cost"`
-	ImagesGen    int     `json:"images_generated"`
+	Month        string             `json:"month"`
+	TotalCost    float64            `json:"total_cost"`
+	InputTokens  int                `json:"input_tokens"`
+	OutputTokens int                `json:"output_tokens"`
+	Calls        int                `json:"calls"`
+	ImageCost    float64            `json:"image_cost"`
+	ImagesGen    int                `json:"images_generated"`
+	DailyCosts   map[string]float64 `json:"daily_costs,omitempty"`
 }
 
 // Tracker persists usage data and enforces budget limits.
@@ -46,6 +47,10 @@ func Global() *Tracker {
 
 func currentMonth() string {
 	return time.Now().Format("2006-01")
+}
+
+func currentDay() string {
+	return time.Now().Format("2006-01-02")
 }
 
 func (t *Tracker) load() {
@@ -89,6 +94,10 @@ func (t *Tracker) RecordUsage(model string, inputTokens, outputTokens int) {
 	t.data.OutputTokens += outputTokens
 	t.data.TotalCost += cost
 	t.data.Calls++
+	if t.data.DailyCosts == nil {
+		t.data.DailyCosts = map[string]float64{}
+	}
+	t.data.DailyCosts[currentDay()] += cost
 	_ = t.save()
 }
 
@@ -105,6 +114,10 @@ func (t *Tracker) RecordImageUsage(model, size string, n int) {
 	t.data.ImageCost += cost
 	t.data.TotalCost += cost
 	t.data.ImagesGen += n
+	if t.data.DailyCosts == nil {
+		t.data.DailyCosts = map[string]float64{}
+	}
+	t.data.DailyCosts[currentDay()] += cost
 	_ = t.save()
 }
 

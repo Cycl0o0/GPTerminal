@@ -8,9 +8,9 @@ import (
 )
 
 var initShellCmd = &cobra.Command{
-	Use:   "init <bash|zsh|fish>",
+	Use:   "init <bash|zsh|fish|powershell>",
 	Short: "Print shell configuration for GPTerminal aliases",
-	Long:  "Prints shell config to set up aliases. Add to your rc file:\n  Bash/Zsh: eval \"$(gpterminal init bash)\"\n  Fish:     gpterminal init fish | source",
+	Long:  "Prints shell config to set up aliases. Add to your rc file:\n  Bash/Zsh:    eval \"$(gpterminal init bash)\"\n  Fish:        gpterminal init fish | source\n  PowerShell:  gpterminal init powershell | Invoke-Expression",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		shell := args[0]
@@ -21,8 +21,10 @@ var initShellCmd = &cobra.Command{
 			fmt.Print(zshInit)
 		case "fish":
 			fmt.Print(fishInit)
+		case "powershell":
+			fmt.Print(powershellInit)
 		default:
-			fmt.Fprintf(os.Stderr, "Unsupported shell: %s (use bash, zsh, or fish)\n", shell)
+			fmt.Fprintf(os.Stderr, "Unsupported shell: %s (use bash, zsh, fish, or powershell)\n", shell)
 			os.Exit(1)
 		}
 	},
@@ -125,4 +127,23 @@ end
 function gptimagine --description 'GPTerminal: generate an image'
     gpterminal imagine $argv
 end
+`
+
+const powershellInit = `# GPTerminal shell integration
+function fuck { gpterminal fix $args }
+function gptchat { gpterminal chat $args }
+function gptdo { gpterminal gptdo $args }
+function gptrun { gpterminal run $args }
+function gptedit { gpterminal edit $args }
+function gptreview { gpterminal review $args }
+function gptcommit { gpterminal commit $args }
+function gptresume { gpterminal resume $args }
+function gptexplaindiff { gpterminal explain-diff $args }
+function gptsessions { gpterminal sessions $args }
+function gpts2t { gpterminal s2t $args }
+function gptt2s { gpterminal t2s $args }
+function risk { gpterminal risk $args }
+function vibe { gpterminal vibe $args }
+function gptread { gpterminal read $args }
+function gptimagine { gpterminal imagine $args }
 `

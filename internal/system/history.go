@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -37,14 +38,17 @@ func detectCurrentShell() string {
 		return "bash"
 	}
 
-	// Try reading /proc/self/status or parent process
-	ppidLink := fmt.Sprintf("/proc/%d/exe", os.Getppid())
-	if target, err := os.Readlink(ppidLink); err == nil {
-		base := filepath.Base(target)
-		switch base {
-		case "fish", "zsh", "bash":
-			return base
+	// Try platform-specific parent process detection
+	if shell := ppidShell(); shell != "" {
+		return shell
+	}
+
+	// On Windows, check for PowerShell
+	if runtime.GOOS == "windows" {
+		if os.Getenv("PSModulePath") != "" {
+			return "powershell"
 		}
+		return "cmd"
 	}
 
 	// Fallback to $SHELL
@@ -64,6 +68,18 @@ func LastCommand() (string, error) {
 		return lastFishCommand(home)
 	case "zsh":
 		return lastLineBasedCommand(filepath.Join(home, ".zsh_history"), "zsh")
+	case "powershell", "pwsh":
+		var histFile string
+		if runtime.GOOS == "windows" {
+			appData := os.Getenv("APPDATA")
+			if appData == "" {
+				return "", fmt.Errorf("APPDATA not set")
+			}
+			histFile = filepath.Join(appData, "Microsoft", "Windows", "PowerShell", "PSReadLine", "ConsoleHost_history.txt")
+		} else {
+			histFile = filepath.Join(home, ".local", "share", "powershell", "PSReadLine", "ConsoleHost_history.txt")
+		}
+		return lastLineBasedCommand(histFile, "powershell")
 	default:
 		return lastLineBasedCommand(filepath.Join(home, ".bash_history"), "bash")
 	}
@@ -71,8 +87,8 @@ func LastCommand() (string, error) {
 
 // lastFishCommand parses fish_history which uses a multi-line YAML-like format:
 //
-//   - cmd: some command
-//     when: 1234567890
+//	- cmd: some command
+//	  when: 1234567890
 func lastFishCommand(home string) (string, error) {
 	histFile := filepath.Join(home, ".local", "share", "fish", "fish_history")
 	data, err := os.ReadFile(histFile)
@@ -100,7 +116,7 @@ func lastFishCommand(home string) (string, error) {
 	return "", fmt.Errorf("no commands found in fish history")
 }
 
-// lastLineBasedCommand handles bash and zsh history (one command per line).
+// lastLineBasedCommand handles bash, zsh, and powershell history (one command per line).
 func lastLineBasedCommand(histFile, shell string) (string, error) {
 	data, err := os.ReadFile(histFile)
 	if err != nil {

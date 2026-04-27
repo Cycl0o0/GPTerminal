@@ -1,3 +1,5 @@
+//go:build !windows
+
 package system
 
 import (
@@ -5,12 +7,6 @@ import (
 	"os"
 	"os/exec"
 )
-
-type ExecResult struct {
-	Output   string
-	ExitCode int
-	Success  bool
-}
 
 func Execute(command string) error {
 	cmd := exec.Command("bash", "-c", command)

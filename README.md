@@ -1,6 +1,6 @@
 # GPTerminal
 
-AI-powered terminal assistant that integrates OpenAI GPT or other OpenAI API-compatible models (like Ollama) into your Linux terminal.
+AI-powered terminal assistant that integrates OpenAI GPT or other OpenAI API-compatible models (like Ollama) into your Linux, macOS, and Windows terminal.
 
 ## Features
 
@@ -25,7 +25,7 @@ AI-powered terminal assistant that integrates OpenAI GPT or other OpenAI API-com
 
 ### Pre-built binaries
 
-Pre-built binaries for Linux and macOS are available on the [Releases](https://github.com/cycl0o0/GPTerminal/releases) page. Download the archive for your platform, extract it, and move the binary to a directory in your `PATH`:
+Pre-built binaries for Linux, macOS, and Windows are available on the [Releases](https://github.com/cycl0o0/GPTerminal/releases) page. Download the archive for your platform, extract it, and move the binary to a directory in your `PATH`:
 
 ```bash
 # Example for Linux amd64
@@ -39,7 +39,13 @@ tar xzf gpterminal-darwin-arm64.tar.gz
 sudo mv gpterminal-darwin-arm64 /usr/local/bin/gpterminal
 ```
 
-Or, if you prefer a user-local install without `sudo`:
+```powershell
+# Example for Windows amd64 (PowerShell)
+tar xzf gpterminal-windows-amd64.tar.gz
+Move-Item gpterminal-windows-amd64.exe C:\Users\you\bin\gpterminal.exe
+```
+
+Or, if you prefer a user-local install without `sudo` (Linux/macOS):
 
 ```bash
 mkdir -p ~/.local/bin
@@ -84,6 +90,9 @@ eval "$(gpterminal init zsh)"
 
 # Fish (~/.config/fish/config.fish)
 eval (gpterminal init fish)
+
+# PowerShell ($PROFILE)
+gpterminal init powershell | Invoke-Expression
 ```
 
 ### Using with Ollama (local models)
@@ -136,6 +145,14 @@ Command: find / -type f -size +1G 2>/dev/null
 [Y]es / [n]o / [e]dit:
 ```
 
+Use `--yes`/`-y` to auto-approve the generated command (useful in scripts and pipelines):
+
+```bash
+$ gpterminal vibe -y "list all docker containers"
+```
+
+When stdout is not a TTY (e.g. piped), vibe prints only the raw command without executing.
+
 ### Interactive chat
 
 ```bash
@@ -162,7 +179,11 @@ The chat TUI now shows the active session in the header and supports:
 $ gpterminal run "run the Go test suite"
 ```
 
-`gptrun` generates one concrete command, shows you the command and its risk, lets you approve or edit it, then executes it. If the command fails, it can ask the AI for one retry command.
+`gptrun` generates one concrete command, shows you the command and its risk, lets you approve or edit it, then executes it. If the command fails, it can ask the AI for one retry command. Use `--yes`/`-y` to auto-approve execution:
+
+```bash
+$ gpterminal run -y "run the Go test suite"
+```
 
 ### GPTEdit
 
@@ -222,6 +243,12 @@ $ gpterminal sessions delete bugfix-v2
 
 `gptsessions` lists saved chat and GPTDo sessions, shows details for one session, renames sessions, and deletes sessions you no longer need.
 
+Use `--markdown` to export a session as a readable markdown document:
+
+```bash
+$ gpterminal sessions show bugfix --markdown > bugfix.md
+```
+
 ### GPTS2T
 
 ```bash
@@ -235,7 +262,13 @@ $ gpterminal s2t --mic
 
 **Disclaimer:** You are solely responsible for the use of this transcription feature. Ensure you have proper authorization and consent before recording or transcribing any audio. Do not use this tool to transcribe conversations without the knowledge and explicit consent of all parties involved.
 
-For live microphone transcription, use `gpterminal s2t --mic`. This streams 24 kHz mono PCM audio to OpenAI's Realtime API and prints incremental transcript updates until you press `Ctrl+C`. Microphone mode currently supports Linux only. On Linux it now prefers `pw-record`, then `parec`, then `arecord` when ALSA exposes a real capture device, with `ffmpeg` as a final fallback. Use `--recorder` to force a backend and `--device` to target a specific source. Realtime mic mode currently supports text output only.
+For live microphone transcription, use `gpterminal s2t --mic`. This streams 24 kHz mono PCM audio to OpenAI's Realtime API and prints incremental transcript updates until you press `Ctrl+C`. Use `--recorder` to force a backend and `--device` to target a specific source. Realtime mic mode currently supports text output only.
+
+**Platform-specific mic backends:**
+
+- **Linux**: prefers `pw-record`, then `parec`, then `arecord` (when ALSA exposes a real capture device), with `ffmpeg` (PulseAudio) as a final fallback
+- **macOS**: prefers `sox` (`brew install sox`), then `ffmpeg` (AVFoundation)
+- **Windows**: uses `ffmpeg` (DirectShow). You may need to specify `--device "Your Microphone Name"`
 
 ### GPTT2S
 
@@ -278,12 +311,40 @@ $ gpterminal imagine "minimal icon set for a CLI tool" --n 3 --size 1024x1024 --
 
 `gptimagine` generates images with OpenAI image models and saves them to disk. You can choose the model, image size, image count, and output directory with flags.
 
+### Shell Completions
+
+Generate tab-completion scripts for your shell:
+
+```bash
+# Bash
+gpterminal completion bash > /etc/bash_completion.d/gpterminal
+
+# Zsh
+gpterminal completion zsh > "${fpath[1]}/_gpterminal"
+
+# Fish
+gpterminal completion fish > ~/.config/fish/completions/gpterminal.fish
+
+# PowerShell
+gpterminal completion powershell | Out-String | Invoke-Expression
+```
+
+### Cost Tracking
+
+View daily or weekly API cost breakdowns:
+
+```bash
+$ gpterminal config usage           # monthly summary
+$ gpterminal config usage --daily   # per-day breakdown
+$ gpterminal config usage --weekly  # per-week breakdown
+```
+
 ### Configuration
 
 ```bash
 gpterminal config set-key <key>          # Save API key
 gpterminal config set-base-url <url>     # Save API base URL (e.g. Ollama)
-gpterminal config show                   # Show current config
+gpterminal config show                   # Show current config (with validation warnings)
 ```
 
 Config is stored at `~/.config/gpterminal/config.yaml`.

@@ -19,7 +19,7 @@ type response struct {
 	Command string `json:"command"`
 }
 
-func Run(ctx context.Context, request string) error {
+func Run(ctx context.Context, request string, autoYes bool) error {
 	client, err := ai.NewClient()
 	if err != nil {
 		return err
@@ -44,6 +44,11 @@ func Run(ctx context.Context, request string) error {
 		if rr, err := risk.Evaluate(ctx, command); err == nil {
 			fmt.Printf("Risk: %d/10 [%s] %s\n", rr.Score, strings.ToUpper(rr.Level), rr.Summary)
 		}
+
+		if autoYes {
+			break
+		}
+
 		fmt.Print("Execute? [Y]es / [e]dit / [n]o: ")
 		answer, _ := reader.ReadString('\n')
 		answer = strings.TrimSpace(strings.ToLower(answer))
@@ -72,6 +77,21 @@ func Run(ctx context.Context, request string) error {
 	}
 
 	fmt.Printf("Exit code: %d\n", result.ExitCode)
+
+	if autoYes {
+		// In auto-yes mode, automatically request and execute retry
+		retry, err := generateRetry(ctx, client, sysInfo, request, command, result.Output)
+		if err != nil {
+			return err
+		}
+		retryCommand := strings.TrimSpace(retry.Command)
+		if retryCommand == "" {
+			return fmt.Errorf("AI did not return a retry command")
+		}
+		fmt.Printf("Retry command: %s\n", retryCommand)
+		return system.Execute(retryCommand)
+	}
+
 	fmt.Print("Ask AI for a retry command? [Y/n] ")
 	answer, _ := reader.ReadString('\n')
 	answer = strings.TrimSpace(strings.ToLower(answer))
