@@ -25,6 +25,12 @@ var t2sCmd = &cobra.Command{
 	Long:  "Generate spoken audio from text using OpenAI text-to-speech models.",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		if !cmd.Flags().Changed("model") {
+			t2sModel = config.T2SModel()
+		}
+		if !cmd.Flags().Changed("voice") {
+			t2sVoice = config.T2SVoice()
+		}
 		format, err := speech.ParseSpeechFormat(t2sFormat)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
@@ -52,8 +58,8 @@ var t2sCmd = &cobra.Command{
 }
 
 func init() {
-	t2sCmd.Flags().StringVar(&t2sModel, "model", config.T2SModel(), "Text-to-speech model")
-	t2sCmd.Flags().StringVar(&t2sVoice, "voice", config.T2SVoice(), "Voice name")
+	t2sCmd.Flags().StringVar(&t2sModel, "model", speech.DefaultSpeechModel, "Text-to-speech model")
+	t2sCmd.Flags().StringVar(&t2sVoice, "voice", speech.DefaultSpeechVoice, "Voice name")
 	t2sCmd.Flags().StringVar(&t2sInstructions, "instructions", "", "Optional speaking style instructions")
 	t2sCmd.Flags().StringVar(&t2sFormat, "format", string(speech.DefaultSpeechFormat), "Audio format: mp3, opus, aac, flac, wav, pcm")
 	t2sCmd.Flags().StringVar(&t2sOutput, "output", "", "Optional output audio file path")
