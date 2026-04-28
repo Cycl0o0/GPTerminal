@@ -53,6 +53,15 @@ var (
 				BorderForeground(lipgloss.Color("86")).
 				Padding(0, 1)
 
+	thinkingLabelStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("141"))
+
+	thinkingMsgStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("183")).
+				Italic(true).
+				PaddingLeft(2)
+
 	welcomeStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("243")).
 			Italic(true).

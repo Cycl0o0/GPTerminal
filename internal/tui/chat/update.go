@@ -36,6 +36,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = nil
 			m.streamBuf = ""
 			m.thinkingText = ""
+			m.reasoningBuf = ""
 			m.streaming = false
 			m.pendingApproval = nil
 			m.notice = ""
@@ -118,6 +119,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.streaming = true
 			m.streamBuf = ""
 			m.thinkingText = "Thinking..."
+			m.reasoningBuf = ""
 			m.err = nil
 			m.notice = ""
 
@@ -165,6 +167,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ThinkingMsg:
 		m.thinkingText = msg.Content
+		if msg.Content != "Thinking..." {
+			m.reasoningBuf = msg.Content
+		}
 		m.notice = ""
 		m.viewport.SetContent(m.renderMessages())
 		m.viewport.GotoBottom()
@@ -206,8 +211,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.messages = append(m.messages, chatMessage{
 			role:      "assistant",
 			content:   msg.FullContent,
+			thinking:  m.reasoningBuf,
 			timestamp: nowTimestamp(),
 		})
+		m.reasoningBuf = ""
 		m.msgCount++
 		m.streamBuf = ""
 		m.eventCh = nil
@@ -225,6 +232,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.Err
 		m.pendingApproval = nil
 		m.thinkingText = ""
+		m.reasoningBuf = ""
 		m.streamBuf = ""
 		m.eventCh = nil
 		m.approvalCh = nil
@@ -237,6 +245,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.streaming = false
 		m.pendingApproval = nil
 		m.thinkingText = ""
+		m.reasoningBuf = ""
 		m.eventCh = nil
 		m.approvalCh = nil
 		m.streamCancel = nil

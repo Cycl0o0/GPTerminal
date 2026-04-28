@@ -76,6 +76,12 @@ func (m Model) renderMessages() string {
 		case "assistant":
 			label := assistantLabelStyle.Render("GPTerminal")
 			sb.WriteString(fmt.Sprintf("%s %s\n", label, ts))
+			if msg.thinking != "" {
+				sb.WriteString(thinkingLabelStyle.Render("Thinking"))
+				sb.WriteString("\n")
+				sb.WriteString(thinkingMsgStyle.Render(msg.thinking))
+				sb.WriteString("\n\n")
+			}
 			rendered := m.renderMarkdown(msg.content)
 			sb.WriteString(assistantMsgStyle.Render(rendered))
 			sb.WriteString("\n\n")
@@ -87,11 +93,23 @@ func (m Model) renderMessages() string {
 		label := assistantLabelStyle.Render("GPTerminal")
 		if m.streamBuf != "" {
 			sb.WriteString(fmt.Sprintf("%s\n", label))
+			if m.reasoningBuf != "" {
+				sb.WriteString(thinkingLabelStyle.Render("Thinking"))
+				sb.WriteString("\n")
+				sb.WriteString(thinkingMsgStyle.Render(m.reasoningBuf))
+				sb.WriteString("\n\n")
+			}
 			sb.WriteString(assistantMsgStyle.Render(m.streamBuf + "█"))
 			sb.WriteString("\n")
 		} else if m.pendingApproval != nil {
 			sb.WriteString(fmt.Sprintf("%s\n", label))
 			sb.WriteString(assistantMsgStyle.Render(renderApprovalPrompt(m.pendingApproval)))
+			sb.WriteString("\n")
+		} else if m.reasoningBuf != "" {
+			sb.WriteString(fmt.Sprintf("%s\n", label))
+			sb.WriteString(thinkingLabelStyle.Render("Thinking"))
+			sb.WriteString("\n")
+			sb.WriteString(thinkingMsgStyle.Render(m.reasoningBuf + " █"))
 			sb.WriteString("\n")
 		} else if m.thinkingText != "" {
 			sb.WriteString(fmt.Sprintf("%s\n", label))

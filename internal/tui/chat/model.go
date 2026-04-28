@@ -20,6 +20,7 @@ type Options struct {
 type chatMessage struct {
 	role      string
 	content   string
+	thinking  string
 	timestamp string
 }
 
@@ -43,6 +44,7 @@ type Model struct {
 	streaming           bool
 	streamBuf           string
 	thinkingText        string
+	reasoningBuf        string
 	err                 error
 	width               int
 	height              int
