@@ -11,23 +11,33 @@ import (
 	"github.com/cycl0o0/GPTerminal/internal/config"
 )
 
+// CommandStats holds per-command usage statistics.
+type CommandStats struct {
+	Count        int     `json:"count"`
+	InputTokens  int     `json:"input_tokens"`
+	OutputTokens int     `json:"output_tokens"`
+	Cost         float64 `json:"cost"`
+}
+
 // UsageData holds tracked API spend for the current month.
 type UsageData struct {
-	Month        string             `json:"month"`
-	TotalCost    float64            `json:"total_cost"`
-	InputTokens  int                `json:"input_tokens"`
-	OutputTokens int                `json:"output_tokens"`
-	Calls        int                `json:"calls"`
-	ImageCost    float64            `json:"image_cost"`
-	ImagesGen    int                `json:"images_generated"`
-	DailyCosts   map[string]float64 `json:"daily_costs,omitempty"`
+	Month        string                    `json:"month"`
+	TotalCost    float64                   `json:"total_cost"`
+	InputTokens  int                       `json:"input_tokens"`
+	OutputTokens int                       `json:"output_tokens"`
+	Calls        int                       `json:"calls"`
+	ImageCost    float64                   `json:"image_cost"`
+	ImagesGen    int                       `json:"images_generated"`
+	DailyCosts   map[string]float64        `json:"daily_costs,omitempty"`
+	CommandUsage map[string]*CommandStats  `json:"command_usage,omitempty"`
 }
 
 // Tracker persists usage data and enforces budget limits.
 type Tracker struct {
-	mu   sync.Mutex
-	data UsageData
-	path string
+	mu         sync.Mutex
+	data       UsageData
+	path       string
+	currentCmd string
 }
 
 var (
@@ -80,6 +90,13 @@ func (t *Tracker) save() error {
 	return os.WriteFile(t.path, data, 0600)
 }
 
+// SetCurrentCommand sets the command name for per-command usage attribution.
+func (t *Tracker) SetCurrentCommand(name string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.currentCmd = name
+}
+
 // RecordUsage records token usage from a chat completion.
 func (t *Tracker) RecordUsage(model string, inputTokens, outputTokens int) {
 	t.mu.Lock()
@@ -98,6 +115,22 @@ func (t *Tracker) RecordUsage(model string, inputTokens, outputTokens int) {
 		t.data.DailyCosts = map[string]float64{}
 	}
 	t.data.DailyCosts[currentDay()] += cost
+
+	if t.currentCmd != "" {
+		if t.data.CommandUsage == nil {
+			t.data.CommandUsage = map[string]*CommandStats{}
+		}
+		cs := t.data.CommandUsage[t.currentCmd]
+		if cs == nil {
+			cs = &CommandStats{}
+			t.data.CommandUsage[t.currentCmd] = cs
+		}
+		cs.Count++
+		cs.InputTokens += inputTokens
+		cs.OutputTokens += outputTokens
+		cs.Cost += cost
+	}
+
 	_ = t.save()
 }
 

@@ -17,6 +17,7 @@ type Kind string
 const (
 	KindChat  Kind = "chat"
 	KindGptDo Kind = "gptdo"
+	KindAgent Kind = "agent"
 )
 
 type ChatMessage struct {
@@ -39,12 +40,23 @@ type GptDoData struct {
 	Summary     string                         `json:"summary"`
 }
 
+type AgentData struct {
+	Objective   string                         `json:"objective"`
+	Messages    []openai.ChatCompletionMessage `json:"messages"`
+	CWD         string                         `json:"cwd"`
+	AutoApprove bool                           `json:"auto_approve"`
+	Completed   bool                           `json:"completed"`
+	Summary     string                         `json:"summary"`
+	StepCount   int                            `json:"step_count"`
+}
+
 type Record struct {
 	Kind      Kind       `json:"kind"`
 	Name      string     `json:"name"`
 	UpdatedAt time.Time  `json:"updated_at"`
 	Chat      *ChatData  `json:"chat,omitempty"`
 	GptDo     *GptDoData `json:"gptdo,omitempty"`
+	Agent     *AgentData `json:"agent,omitempty"`
 }
 
 type Entry struct {
@@ -56,6 +68,9 @@ type Entry struct {
 	GptDoRequest   string
 	GptDoCompleted bool
 	GptDoSummary   string
+	AgentObjective string
+	AgentCompleted bool
+	AgentSummary   string
 }
 
 var invalidNameChars = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
@@ -228,6 +243,12 @@ func entryFromRecord(record *Record) Entry {
 			entry.GptDoCompleted = record.GptDo.Completed
 			entry.GptDoSummary = preview(record.GptDo.Summary)
 		}
+	case KindAgent:
+		if record.Agent != nil {
+			entry.AgentObjective = preview(record.Agent.Objective)
+			entry.AgentCompleted = record.Agent.Completed
+			entry.AgentSummary = preview(record.Agent.Summary)
+		}
 	}
 
 	return entry
@@ -297,6 +318,36 @@ func ExportMarkdown(name string) (string, error) {
 			if strings.TrimSpace(record.GptDo.Summary) != "" {
 				b.WriteString("---\n\n")
 				b.WriteString(fmt.Sprintf("**Summary:** %s\n", record.GptDo.Summary))
+			}
+		}
+
+	case KindAgent:
+		b.WriteString(fmt.Sprintf("# Agent Session: %s\n\n", record.Name))
+		b.WriteString(fmt.Sprintf("**Date:** %s\n\n", record.UpdatedAt.Local().Format(time.RFC1123)))
+
+		if record.Agent != nil {
+			b.WriteString(fmt.Sprintf("**Objective:** %s\n\n", record.Agent.Objective))
+			b.WriteString(fmt.Sprintf("**Working Directory:** %s\n\n", record.Agent.CWD))
+			status := "in progress"
+			if record.Agent.Completed {
+				status = "completed"
+			}
+			b.WriteString(fmt.Sprintf("**Status:** %s\n\n", status))
+			b.WriteString(fmt.Sprintf("**Steps:** %d\n\n", record.Agent.StepCount))
+			b.WriteString("---\n\n")
+
+			for _, msg := range record.Agent.Messages {
+				if msg.Role == "system" || strings.TrimSpace(msg.Content) == "" {
+					continue
+				}
+				b.WriteString(fmt.Sprintf("### %s\n\n", msg.Role))
+				b.WriteString(msg.Content)
+				b.WriteString("\n\n")
+			}
+
+			if strings.TrimSpace(record.Agent.Summary) != "" {
+				b.WriteString("---\n\n")
+				b.WriteString(fmt.Sprintf("**Summary:** %s\n", record.Agent.Summary))
 			}
 		}
 	}

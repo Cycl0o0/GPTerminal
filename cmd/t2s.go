@@ -7,6 +7,7 @@ import (
 
 	"github.com/cycl0o0/GPTerminal/internal/config"
 	"github.com/cycl0o0/GPTerminal/internal/speech"
+	"github.com/cycl0o0/GPTerminal/internal/usage"
 	"github.com/spf13/cobra"
 )
 
@@ -25,6 +26,7 @@ var t2sCmd = &cobra.Command{
 	Long:  "Generate spoken audio from text using OpenAI text-to-speech models.",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		usage.Global().SetCurrentCommand("t2s")
 		if !cmd.Flags().Changed("model") {
 			t2sModel = config.T2SModel()
 		}

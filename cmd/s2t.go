@@ -10,6 +10,7 @@ import (
 
 	"github.com/cycl0o0/GPTerminal/internal/config"
 	"github.com/cycl0o0/GPTerminal/internal/speech"
+	"github.com/cycl0o0/GPTerminal/internal/usage"
 	"github.com/spf13/cobra"
 )
 
@@ -45,6 +46,7 @@ DISCLAIMER: You are solely responsible for the use of this transcription feature
 		return nil
 	},
 	Run: func(cmd *cobra.Command, args []string) {
+		usage.Global().SetCurrentCommand("s2t")
 		if !cmd.Flags().Changed("model") {
 			s2tModel = config.S2TModel()
 		}

@@ -110,6 +110,10 @@ func T2SVoice() string {
 	return viper.GetString("t2s_voice")
 }
 
+func MCPServers() map[string]interface{} {
+	return viper.GetStringMap("mcp_servers")
+}
+
 func SaveAPIBaseURL(url string) error {
 	dir := ConfigDir()
 	if err := os.MkdirAll(dir, 0700); err != nil {

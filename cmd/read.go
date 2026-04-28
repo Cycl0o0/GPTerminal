@@ -7,6 +7,7 @@ import (
 
 	"github.com/cycl0o0/GPTerminal/internal/chatutil"
 	"github.com/cycl0o0/GPTerminal/internal/reader"
+	"github.com/cycl0o0/GPTerminal/internal/usage"
 	"github.com/spf13/cobra"
 )
 
@@ -19,6 +20,7 @@ var readCmd = &cobra.Command{
 		"  gpterminal read https://example.com/docs \"summarize this page\"\n" +
 		"  cat server.log | gpterminal read \"summarize the main failures\"",
 	Run: func(cmd *cobra.Command, args []string) {
+		usage.Global().SetCurrentCommand("read")
 		if chatutil.HasPipedStdin(os.Stdin) {
 			stdinData, err := chatutil.ReadPipedStdin(os.Stdin)
 			if err != nil {

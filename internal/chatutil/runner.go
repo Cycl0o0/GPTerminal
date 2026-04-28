@@ -17,6 +17,7 @@ import (
 	"github.com/cycl0o0/GPTerminal/internal/config"
 	"github.com/cycl0o0/GPTerminal/internal/diffutil"
 	"github.com/cycl0o0/GPTerminal/internal/fileutil"
+	"github.com/cycl0o0/GPTerminal/internal/mcp"
 	"github.com/cycl0o0/GPTerminal/internal/risk"
 	"github.com/cycl0o0/GPTerminal/internal/system"
 	openai "github.com/sashabaranov/go-openai"
@@ -60,6 +61,7 @@ type StreamOptions struct {
 type Runner struct {
 	client  *ai.Client
 	workDir string
+	mcp     *mcp.Registry
 }
 
 func NewRunner(client *ai.Client, sysInfo system.SystemInfo) *Runner {
@@ -74,6 +76,16 @@ func NewRunner(client *ai.Client, sysInfo system.SystemInfo) *Runner {
 		client:  client,
 		workDir: workDir,
 	}
+}
+
+func NewRunnerWithMCP(client *ai.Client, sysInfo system.SystemInfo, registry *mcp.Registry) *Runner {
+	r := NewRunner(client, sysInfo)
+	r.mcp = registry
+	return r
+}
+
+func (r *Runner) SetMCP(registry *mcp.Registry) {
+	r.mcp = registry
 }
 
 func (r *Runner) Complete(ctx context.Context, history []openai.ChatCompletionMessage) (string, []openai.ChatCompletionMessage, error) {
@@ -121,12 +133,17 @@ func (r *Runner) Stream(ctx context.Context, history []openai.ChatCompletionMess
 }
 
 func (r *Runner) streamAssistant(ctx context.Context, history []openai.ChatCompletionMessage, opts StreamOptions) (openai.ChatCompletionMessage, error) {
+	tools := chatTools(opts.AllowWriteTools)
+	if r.mcp != nil {
+		tools = append(tools, r.mcp.Tools()...)
+	}
+
 	req := openai.ChatCompletionRequest{
 		Model:             config.Model(),
 		Messages:          history,
 		Temperature:       config.Temperature(),
 		MaxTokens:         config.MaxTokens(),
-		Tools:             chatTools(opts.AllowWriteTools),
+		Tools:             tools,
 		ParallelToolCalls: false,
 		StreamOptions: &openai.StreamOptions{
 			IncludeUsage: true,
@@ -181,6 +198,14 @@ func (r *Runner) streamAssistant(ctx context.Context, history []openai.ChatCompl
 		Content:   content.String(),
 		ToolCalls: orderedToolCalls(toolCalls),
 	}, nil
+}
+
+func IsStdoutTTY() bool {
+	info, err := os.Stdout.Stat()
+	if err != nil {
+		return true
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }
 
 func HasPipedStdin(f *os.File) bool {
@@ -407,6 +432,13 @@ func (r *Runner) executeToolCall(ctx context.Context, call openai.ToolCall, opts
 		return out
 
 	default:
+		if r.mcp != nil && r.mcp.HasTool(call.Function.Name) {
+			result, err := r.mcp.HandleToolCall(call.Function.Name, call.Function.Arguments)
+			if err != nil {
+				return "Error: " + err.Error()
+			}
+			return truncateText(result, maxToolOutputChars)
+		}
 		return "Error: unknown tool " + call.Function.Name
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/cycl0o0/GPTerminal/internal/fix"
+	"github.com/cycl0o0/GPTerminal/internal/usage"
 	"github.com/spf13/cobra"
 )
 
@@ -13,6 +14,7 @@ var fixCmd = &cobra.Command{
 	Aliases: []string{"fuck"},
 	Short:   "Fix the last failed command using AI",
 	Run: func(cmd *cobra.Command, args []string) {
+		usage.Global().SetCurrentCommand("fix")
 		if err := fix.Run(cmd.Context()); err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 			os.Exit(1)

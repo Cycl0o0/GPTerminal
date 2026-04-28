@@ -15,13 +15,13 @@ import (
 
 const maxReviewChars = 120000
 
-func Run(ctx context.Context, path string, staged bool) (string, error) {
+func Run(ctx context.Context, path string, staged bool, stdinContent string) (string, error) {
 	client, err := ai.NewClient()
 	if err != nil {
 		return "", err
 	}
 
-	input, err := buildInput(path, staged)
+	input, err := buildInput(path, staged, stdinContent)
 	if err != nil {
 		return "", err
 	}
@@ -34,7 +34,11 @@ func Run(ctx context.Context, path string, staged bool) (string, error) {
 	return client.Complete(ctx, messages)
 }
 
-func buildInput(path string, staged bool) (string, error) {
+func buildInput(path string, staged bool, stdinContent string) (string, error) {
+	if stdinContent != "" && path == "" {
+		return fmt.Sprintf("Review this piped content for bugs, risks, regressions, and missing tests.\n\n```text\n%s\n```", truncate(stdinContent, maxReviewChars)), nil
+	}
+
 	if path != "" {
 		content, err := fileutil.ReadText(path)
 		if err != nil {

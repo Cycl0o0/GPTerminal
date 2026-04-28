@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/cycl0o0/GPTerminal/internal/commitmsg"
+	"github.com/cycl0o0/GPTerminal/internal/usage"
 	"github.com/spf13/cobra"
 )
 
@@ -15,6 +16,7 @@ var commitCmd = &cobra.Command{
 	Use:   "commit",
 	Short: "Generate a commit message from the staged diff",
 	Run: func(cmd *cobra.Command, args []string) {
+		usage.Global().SetCurrentCommand("commit")
 		if err := commitmsg.Run(cmd.Context(), commitConventional, commitApply); err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 			os.Exit(1)

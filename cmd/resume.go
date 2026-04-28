@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/cycl0o0/GPTerminal/internal/agent"
 	"github.com/cycl0o0/GPTerminal/internal/gptdo"
 	"github.com/cycl0o0/GPTerminal/internal/session"
 	"github.com/spf13/cobra"
@@ -41,6 +42,11 @@ var resumeCmd = &cobra.Command{
 			}
 		case session.KindChat:
 			if err := runChatCommand(cmd, nil, name, true); err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+		case session.KindAgent:
+			if err := agent.Resume(cmd.Context(), name); err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
 				os.Exit(1)
 			}

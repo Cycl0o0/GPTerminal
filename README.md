@@ -19,6 +19,12 @@ AI-powered terminal assistant that integrates OpenAI GPT or other OpenAI API-com
 - **GPTT2S** (`gpterminal t2s "<text>"`) - Text-to-speech audio generation
 - **GPTRead** (`gpterminal read [file] [question...]`) - AI analysis for text files, images, PDFs, and piped text
 - **GPTImagine** (`gpterminal imagine "<prompt>"`) - Image generation with OpenAI image models
+- **Agent Mode** (`gpterminal agent "<objective>"`) - Autonomous AI agent that plans and executes multi-step tasks
+- **Stats Dashboard** (`gpterminal stats`) - Usage statistics with per-command tracking and optional TUI dashboard
+- **Auto-Update** (`gpterminal update`) - Check for and install updates from GitHub Releases
+- **Custom Templates** (`gpterminal template`) - Define custom AI commands via YAML template files
+- **MCP Support** - Connect Model Context Protocol servers to extend available tools in chat and agent
+- **Enhanced Pipe Mode** - All commands support stdin piping and disable colors when stdout is not a TTY
 - **System-Aware** - Detects OS, kernel, shell, CPU, memory, GPU for context-aware responses
 
 ## Installation
@@ -311,6 +317,92 @@ $ gpterminal imagine "minimal icon set for a CLI tool" --n 3 --size 1024x1024 --
 
 `gptimagine` generates images with OpenAI image models and saves them to disk. You can choose the model, image size, image count, and output directory with flags.
 
+### Agent Mode
+
+```bash
+$ gpterminal agent "find all TODO comments in the codebase and list them"
+$ gpterminal agent "create a hello world Python script" --session myagent
+$ gpterminal agent "refactor the logging module" --max-steps 30
+$ gpterminal resume myagent
+```
+
+`gptagent` launches an autonomous AI agent that plans and executes multi-step tasks. The agent uses available tools (read_file, list_directory, search_text, run_command, write_file) to accomplish objectives. Commands with risk score above 7/10 require manual approval. Use `--session` to save progress and resume later. When MCP servers are configured, their tools are also available to the agent.
+
+### Stats Dashboard
+
+```bash
+$ gpterminal stats
+$ gpterminal stats --tui
+```
+
+`gptstats` shows usage statistics including total cost, API calls, tokens used, per-command breakdowns, and daily cost trends. Use `--tui` for an interactive terminal dashboard.
+
+### Auto-Update
+
+```bash
+$ gpterminal update --check    # Check for updates without installing
+$ gpterminal update            # Download and install the latest version
+```
+
+Downloads pre-built binaries from GitHub Releases and replaces the current binary atomically.
+
+### Custom Templates
+
+```bash
+$ gpterminal template create explain    # Create a starter template
+$ gpterminal template list              # List available templates
+$ gpterminal explain "recursion"        # Use a custom template command
+```
+
+Define custom AI commands via YAML files in `~/.config/gpterminal/templates/`. Each template becomes a top-level command with configurable system prompt, input mode, variables, and streaming options.
+
+Example template (`~/.config/gpterminal/templates/explain.yaml`):
+
+```yaml
+name: explain
+description: "Explain a concept simply"
+system_prompt: |
+  You are a patient teacher. Explain the following concept.
+  Target audience: {{audience}}.
+input_mode: args
+variables:
+  audience: "developers"
+stream: true
+use_tools: false
+```
+
+### MCP Support
+
+GPTerminal supports the Model Context Protocol (MCP) for extending available tools. Configure MCP servers in `~/.config/gpterminal/config.yaml`:
+
+```yaml
+mcp_servers:
+  filesystem:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/home"]
+  github:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_TOKEN: "ghp_..."
+```
+
+MCP tools are automatically available in `chat` and `agent` commands.
+
+### Enhanced Pipe Mode
+
+All commands now support stdin piping:
+
+```bash
+$ git diff | gpterminal review           # Review piped diff
+$ git diff | gpterminal explain-diff     # Explain piped diff
+$ echo "rm -rf /" | gpterminal risk      # Evaluate piped command risk
+$ echo "list files" | gpterminal vibe    # Pipe description to vibe
+$ gpterminal risk "rm -rf /" | cat       # Plain output when piped
+```
+
+Colors and spinners are automatically stripped when stdout is not a TTY.
+
 ### Shell Completions
 
 Generate tab-completion scripts for your shell:
@@ -358,6 +450,7 @@ Config is stored at `~/.config/gpterminal/config.yaml`.
 | `model` | `gpt-4o-mini` | `OPENAI_MODEL` | Model to use |
 | `temperature` | `0.7` | - | Response creativity |
 | `max_tokens` | `2048` | - | Max response length |
+| `mcp_servers` | - | - | MCP server configurations (see MCP Support) |
 
 ## Author
 

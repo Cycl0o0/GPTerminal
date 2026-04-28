@@ -10,9 +10,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/cycl0o0/GPTerminal/internal/ai"
 	"github.com/cycl0o0/GPTerminal/internal/chatutil"
+	"github.com/cycl0o0/GPTerminal/internal/config"
+	"github.com/cycl0o0/GPTerminal/internal/mcp"
 	"github.com/cycl0o0/GPTerminal/internal/session"
 	"github.com/cycl0o0/GPTerminal/internal/system"
 	"github.com/cycl0o0/GPTerminal/internal/tui/chat"
+	"github.com/cycl0o0/GPTerminal/internal/usage"
 	openai "github.com/sashabaranov/go-openai"
 	"github.com/spf13/cobra"
 )
@@ -40,6 +43,7 @@ func init() {
 }
 
 func runChatCommand(cmd *cobra.Command, args []string, sessionName string, forceInteractive bool) error {
+	usage.Global().SetCurrentCommand("chat")
 	client, err := ai.NewClient()
 	if err != nil {
 		return err
@@ -63,7 +67,17 @@ func runChatCommand(cmd *cobra.Command, args []string, sessionName string, force
 			return fmt.Errorf("no prompt or stdin input provided")
 		}
 
-		runner := chatutil.NewRunner(client, sysInfo)
+		var mcpReg *mcp.Registry
+		if servers := config.MCPServers(); len(servers) > 0 {
+			mcpReg = mcp.NewRegistry()
+			if err := mcpReg.LoadFromConfig(); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: MCP: %v\n", err)
+			} else {
+				defer mcpReg.Close()
+			}
+		}
+
+		runner := chatutil.NewRunnerWithMCP(client, sysInfo, mcpReg)
 		history, transcript := loadChatSession(sysInfo, sessionName)
 		history = append(history, openai.ChatCompletionMessage{
 			Role:    openai.ChatMessageRoleUser,

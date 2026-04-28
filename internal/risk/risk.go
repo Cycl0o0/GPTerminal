@@ -80,3 +80,16 @@ func PrintResult(r *RiskResult) {
 	}
 	fmt.Println()
 }
+
+func PrintResultPlain(r *RiskResult) {
+	fmt.Printf("\nRisk Score: %d/10 [%s]\n", r.Score, strings.ToUpper(r.Level))
+	fmt.Println(r.Summary)
+
+	if len(r.Risks) > 0 {
+		fmt.Println("\nRisks:")
+		for _, risk := range r.Risks {
+			fmt.Printf("  - %s\n", risk)
+		}
+	}
+	fmt.Println()
+}

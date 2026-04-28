@@ -11,20 +11,33 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 )
 
-func Run(ctx context.Context, staged bool, paths []string) (string, error) {
-	if !gitutil.IsRepo() {
-		return "", fmt.Errorf("not inside a git repository")
-	}
+func Run(ctx context.Context, staged bool, paths []string, stdinDiff string) (string, error) {
+	var diff string
+	var scope string
 
-	diff, err := gitutil.Diff(staged, paths...)
-	if err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(diff) == "" {
-		if staged {
-			return "", fmt.Errorf("no staged diff to explain")
+	if stdinDiff != "" {
+		diff = stdinDiff
+		scope = "piped"
+	} else {
+		if !gitutil.IsRepo() {
+			return "", fmt.Errorf("not inside a git repository")
 		}
-		return "", fmt.Errorf("no diff to explain")
+
+		var err error
+		diff, err = gitutil.Diff(staged, paths...)
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(diff) == "" {
+			if staged {
+				return "", fmt.Errorf("no staged diff to explain")
+			}
+			return "", fmt.Errorf("no diff to explain")
+		}
+		scope = "working tree"
+		if staged {
+			scope = "staged"
+		}
 	}
 
 	client, err := ai.NewClient()
@@ -32,10 +45,6 @@ func Run(ctx context.Context, staged bool, paths []string) (string, error) {
 		return "", err
 	}
 	sysInfo := system.Detect()
-	scope := "working tree"
-	if staged {
-		scope = "staged"
-	}
 	messages := []openai.ChatCompletionMessage{
 		{Role: openai.ChatMessageRoleSystem, Content: ai.ExplainDiffSystemPrompt(sysInfo.ContextBlock())},
 		{Role: openai.ChatMessageRoleUser, Content: fmt.Sprintf("Explain this %s git diff.\n\n```diff\n%s\n```", scope, diff)},

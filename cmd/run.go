@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	runpkg "github.com/cycl0o0/GPTerminal/internal/run"
+	"github.com/cycl0o0/GPTerminal/internal/usage"
 	"github.com/spf13/cobra"
 )
 
@@ -16,6 +17,7 @@ var runCmd = &cobra.Command{
 	Short: "Generate, review, and execute one AI-planned command",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		usage.Global().SetCurrentCommand("run")
 		if err := runpkg.Run(cmd.Context(), strings.Join(args, " "), runAutoYes); err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 			os.Exit(1)

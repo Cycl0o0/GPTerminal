@@ -6,6 +6,7 @@ import (
 
 	"github.com/cycl0o0/GPTerminal/internal/config"
 	"github.com/cycl0o0/GPTerminal/internal/imagine"
+	"github.com/cycl0o0/GPTerminal/internal/usage"
 	"github.com/spf13/cobra"
 )
 
@@ -15,6 +16,7 @@ var imagineCmd = &cobra.Command{
 	Long:  "Generate images using OpenAI's image generation API (DALL-E / GPT-Image).",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		usage.Global().SetCurrentCommand("imagine")
 		prompt := args[0]
 		if len(args) > 1 {
 			// Join all args as the prompt for convenience

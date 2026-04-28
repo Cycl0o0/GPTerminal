@@ -51,6 +51,8 @@ alias risk='gpterminal risk'
 alias vibe='gpterminal vibe'
 alias gptread='gpterminal read'
 alias gptimagine='gpterminal imagine'
+alias gptstats='gpterminal stats'
+alias gptagent='gpterminal agent'
 
 # Flush history after each command for reliable fix
 export PROMPT_COMMAND="history -a;${PROMPT_COMMAND}"
@@ -73,6 +75,8 @@ alias risk='gpterminal risk'
 alias vibe='gpterminal vibe'
 alias gptread='gpterminal read'
 alias gptimagine='gpterminal imagine'
+alias gptstats='gpterminal stats'
+alias gptagent='gpterminal agent'
 
 # Flush history after each command for reliable fix
 setopt INC_APPEND_HISTORY
@@ -127,6 +131,12 @@ end
 function gptimagine --description 'GPTerminal: generate an image'
     gpterminal imagine $argv
 end
+function gptstats --description 'GPTerminal: usage statistics'
+    gpterminal stats $argv
+end
+function gptagent --description 'GPTerminal: autonomous agent'
+    gpterminal agent $argv
+end
 `
 
 const powershellInit = `# GPTerminal shell integration
@@ -146,4 +156,6 @@ function risk { gpterminal risk $args }
 function vibe { gpterminal vibe $args }
 function gptread { gpterminal read $args }
 function gptimagine { gpterminal imagine $args }
+function gptstats { gpterminal stats $args }
+function gptagent { gpterminal agent $args }
 `
