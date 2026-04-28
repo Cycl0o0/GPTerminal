@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/cycl0o0/GPTerminal/internal/config"
 	"github.com/cycl0o0/GPTerminal/internal/speech"
 	"github.com/spf13/cobra"
 )
@@ -114,7 +115,7 @@ DISCLAIMER: You are solely responsible for the use of this transcription feature
 }
 
 func init() {
-	s2tCmd.Flags().StringVar(&s2tModel, "model", speech.DefaultTranscriptionModel, "Speech-to-text model")
+	s2tCmd.Flags().StringVar(&s2tModel, "model", config.S2TModel(), "Speech-to-text model")
 	s2tCmd.Flags().StringVar(&s2tLanguage, "language", "", "Optional source language hint (for transcriptions)")
 	s2tCmd.Flags().StringVar(&s2tPrompt, "prompt", "", "Optional prompt to guide transcription")
 	s2tCmd.Flags().StringVar(&s2tFormat, "format", string(speech.DefaultTranscriptionFormat), "Output format: text, json, verbose_json, srt, vtt")

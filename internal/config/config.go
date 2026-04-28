@@ -17,6 +17,9 @@ const (
 	DefaultImageModel = "gpt-image-1"
 	DefaultImageSize  = "1024x1024"
 	DefaultBaseURL    = "https://api.openai.com/v1"
+	DefaultS2TModel   = "gpt-4o-mini-transcribe"
+	DefaultT2SModel   = "gpt-4o-mini-tts"
+	DefaultT2SVoice   = "marin"
 )
 
 func Init() {
@@ -34,6 +37,9 @@ func Init() {
 	viper.SetDefault("image_model", DefaultImageModel)
 	viper.SetDefault("image_size", DefaultImageSize)
 	viper.SetDefault("api_base_url", DefaultBaseURL)
+	viper.SetDefault("s2t_model", DefaultS2TModel)
+	viper.SetDefault("t2s_model", DefaultT2SModel)
+	viper.SetDefault("t2s_voice", DefaultT2SVoice)
 
 	viper.SetEnvPrefix("OPENAI")
 	viper.BindEnv("api_key")
@@ -90,6 +96,18 @@ func ImageSize() string {
 
 func APIBaseURL() string {
 	return viper.GetString("api_base_url")
+}
+
+func S2TModel() string {
+	return viper.GetString("s2t_model")
+}
+
+func T2SModel() string {
+	return viper.GetString("t2s_model")
+}
+
+func T2SVoice() string {
+	return viper.GetString("t2s_voice")
 }
 
 func SaveAPIBaseURL(url string) error {

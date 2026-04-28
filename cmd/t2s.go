@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/cycl0o0/GPTerminal/internal/config"
 	"github.com/cycl0o0/GPTerminal/internal/speech"
 	"github.com/spf13/cobra"
 )
@@ -51,8 +52,8 @@ var t2sCmd = &cobra.Command{
 }
 
 func init() {
-	t2sCmd.Flags().StringVar(&t2sModel, "model", speech.DefaultSpeechModel, "Text-to-speech model")
-	t2sCmd.Flags().StringVar(&t2sVoice, "voice", speech.DefaultSpeechVoice, "Voice name")
+	t2sCmd.Flags().StringVar(&t2sModel, "model", config.T2SModel(), "Text-to-speech model")
+	t2sCmd.Flags().StringVar(&t2sVoice, "voice", config.T2SVoice(), "Voice name")
 	t2sCmd.Flags().StringVar(&t2sInstructions, "instructions", "", "Optional speaking style instructions")
 	t2sCmd.Flags().StringVar(&t2sFormat, "format", string(speech.DefaultSpeechFormat), "Audio format: mp3, opus, aac, flac, wav, pcm")
 	t2sCmd.Flags().StringVar(&t2sOutput, "output", "", "Optional output audio file path")
