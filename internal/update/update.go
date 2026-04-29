@@ -1,6 +1,8 @@
 package update
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,6 +33,7 @@ type CheckResult struct {
 	Available   bool
 	Notes       string
 	DownloadURL string
+	Archive     bool
 }
 
 func Check(currentVersion string) (*CheckResult, error) {
@@ -58,12 +61,20 @@ func Check(currentVersion string) (*CheckResult, error) {
 
 	if CompareVersions(currentVersion, latest) < 0 {
 		result.Available = true
-		assetName := fmt.Sprintf("gpterminal-%s-%s", runtime.GOOS, runtime.GOARCH)
+
+		// Try .tar.gz archive first, then bare binary
+		tarName := fmt.Sprintf("gpterminal-%s-%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+		bareName := fmt.Sprintf("gpterminal-%s-%s", runtime.GOOS, runtime.GOARCH)
 		if runtime.GOOS == "windows" {
-			assetName += ".exe"
+			bareName += ".exe"
 		}
 		for _, a := range rel.Assets {
-			if a.Name == assetName {
+			if a.Name == tarName {
+				result.DownloadURL = a.BrowserDownloadURL
+				result.Archive = true
+				break
+			}
+			if a.Name == bareName {
 				result.DownloadURL = a.BrowserDownloadURL
 				break
 			}
@@ -97,13 +108,23 @@ func Apply(result *CheckResult) error {
 		return fmt.Errorf("resolve executable path: %w", err)
 	}
 
+	var binaryReader io.Reader
+	if result.Archive {
+		binaryReader, err = extractBinaryFromTarGz(resp.Body)
+		if err != nil {
+			return fmt.Errorf("extract archive: %w", err)
+		}
+	} else {
+		binaryReader = resp.Body
+	}
+
 	tmpPath := execPath + ".new"
 	tmpFile, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
 	if err != nil {
 		return fmt.Errorf("create temp file: %w", err)
 	}
 
-	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+	if _, err := io.Copy(tmpFile, binaryReader); err != nil {
 		tmpFile.Close()
 		os.Remove(tmpPath)
 		return fmt.Errorf("write update: %w", err)
@@ -116,6 +137,31 @@ func Apply(result *CheckResult) error {
 	}
 
 	return os.Chmod(execPath, 0755)
+}
+
+// extractBinaryFromTarGz reads a .tar.gz stream and returns a reader for the
+// first file whose name starts with "gpterminal".
+func extractBinaryFromTarGz(r io.Reader) (io.Reader, error) {
+	gz, err := gzip.NewReader(r)
+	if err != nil {
+		return nil, fmt.Errorf("gzip: %w", err)
+	}
+
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("tar: %w", err)
+		}
+		name := filepath.Base(hdr.Name)
+		if hdr.Typeflag == tar.TypeReg && strings.HasPrefix(name, "gpterminal") {
+			return tr, nil
+		}
+	}
+	return nil, fmt.Errorf("no gpterminal binary found in archive")
 }
 
 func CompareVersions(a, b string) int {
