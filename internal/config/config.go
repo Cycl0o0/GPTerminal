@@ -129,6 +129,21 @@ func SaveAPIBaseURL(url string) error {
 	return os.Chmod(cfgFile, 0600)
 }
 
+func SaveModel(model string) error {
+	dir := ConfigDir()
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+
+	viper.Set("model", model)
+
+	cfgFile := ConfigFile()
+	if err := viper.WriteConfigAs(cfgFile); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	return os.Chmod(cfgFile, 0600)
+}
+
 func SaveAPIKey(key string) error {
 	dir := ConfigDir()
 	if err := os.MkdirAll(dir, 0700); err != nil {

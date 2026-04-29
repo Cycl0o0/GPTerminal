@@ -12,6 +12,18 @@ var rootCmd = &cobra.Command{
 	Use:   "gpterminal",
 	Short: "GPTerminal - AI-powered terminal assistant",
 	Long:  "GPTerminal seamlessly integrates OpenAI GPT or other OpenAI API-compatible models (like Ollama) into your Linux terminal.\nCommand correction, TUI chat, risk evaluation, and natural language commands.\n\nMade with <3 by Cycl0o0",
+	Run: func(cmd *cobra.Command, args []string) {
+		if config.APIKey() == "" && os.Getenv("OPENAI_API_KEY") == "" {
+			fmt.Println("No API key configured. Launching setup wizard...")
+			fmt.Println()
+			if err := runSetupWizard(); err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			return
+		}
+		cmd.Help()
+	},
 }
 
 func Execute() {
