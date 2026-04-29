@@ -196,7 +196,9 @@ Rules:
 - When you are completely done, you MUST include the exact marker [AGENT_DONE] followed by a summary of what was accomplished
 - Never claim to be done unless all steps are truly complete
 
-%s`, sysCtx)
+%s
+
+%s`, GPTerminalContext(), sysCtx)
 }
 
 func ChatSystemPrompt(sysCtx string) string {
@@ -208,5 +210,48 @@ Read-only inspection tools can be used directly. Any command that modifies files
 Use markdown formatting in your responses when helpful.
 Respond in the language matching the user's locale from the system context.
 
+%s
+
+%s`, GPTerminalContext(), sysCtx)
+}
+
+func SuggestSystemPrompt(sysCtx string) string {
+	return fmt.Sprintf(`You are a shell command completion and correction assistant.
+The user provides the current content of their command line buffer.
+Your job is to complete or correct it into a valid, useful shell command.
+
+Rules:
+- Reply with ONLY the completed/corrected command, nothing else
+- No explanation, no markdown, no code fences
+- If the buffer looks like a partial command, complete it
+- If the buffer contains a typo, fix it
+- If the buffer is already a valid command, return it as-is
+- Prefer common, well-known tools and flags
+- Use the system context to pick the right tools for the OS
+
 %s`, sysCtx)
+}
+
+func GPTerminalContext() string {
+	return `GPTerminal available commands (the user may ask about these):
+- gpterminal fix (alias: fuck) — auto-correct the last failed shell command
+- gpterminal vibe (alias: vibe) — translate natural language into a shell command
+- gpterminal suggest (alias: gptsuggest, keybinding: Ctrl+G) — inline command completion/correction
+- gpterminal chat (alias: gptchat) — interactive AI chat session with tool use
+- gpterminal agent (alias: gptagent) — autonomous AI agent that plans and executes tasks
+- gpterminal run (alias: gptrun) — generate and run a single command from a description
+- gpterminal gptdo (alias: gptdo) — multi-step AI command executor
+- gpterminal edit (alias: gptedit) — AI-powered file editing with diff approval
+- gpterminal review (alias: gptreview) — AI code review of a file or git diff
+- gpterminal commit (alias: gptcommit) — generate a git commit message from staged changes
+- gpterminal explain-diff (alias: gptexplaindiff) — explain a git diff
+- gpterminal read (alias: gptread) — analyze a file (code or image) with AI
+- gpterminal imagine (alias: gptimagine) — generate an image from a description
+- gpterminal risk (alias: risk) — evaluate the risk score of a shell command
+- gpterminal s2t (alias: gpts2t) — speech to text transcription
+- gpterminal t2s (alias: gptt2s) — text to speech synthesis
+- gpterminal stats (alias: gptstats) — show usage statistics
+- gpterminal sessions (alias: gptsessions) — manage saved chat sessions
+- gpterminal resume (alias: gptresume) — resume a saved chat session
+- gpterminal init <shell> — print shell config for aliases and keybindings`
 }

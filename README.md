@@ -19,6 +19,7 @@ AI-powered terminal assistant that integrates OpenAI GPT or other OpenAI API-com
 - **GPTT2S** (`gpterminal t2s "<text>"`) - Text-to-speech audio generation
 - **GPTRead** (`gpterminal read [file] [question...]`) - AI analysis for text files, images, PDFs, and piped text
 - **GPTImagine** (`gpterminal imagine "<prompt>"`) - Image generation with OpenAI image models
+- **Inline Suggest** (`gpterminal suggest` / `Ctrl+G`) - AI-powered inline command completion and correction
 - **Agent Mode** (`gpterminal agent "<objective>"`) - Autonomous AI agent that plans and executes multi-step tasks
 - **Stats Dashboard** (`gpterminal stats`) - Usage statistics with per-command tracking and optional TUI dashboard
 - **Auto-Update** (`gpterminal update`) - Check for and install updates from GitHub Releases
@@ -316,6 +317,15 @@ $ gpterminal imagine "minimal icon set for a CLI tool" --n 3 --size 1024x1024 --
 ```
 
 `gptimagine` generates images with OpenAI image models and saves them to disk. You can choose the model, image size, image count, and output directory with flags.
+
+### Inline Suggest
+
+```bash
+$ gpterminal suggest "git staus"
+git status
+```
+
+Press `Ctrl+G` in your shell to trigger inline AI suggestion on the current command line buffer. The keybinding replaces your input with the completed or corrected command. Also available as the `gptsuggest` alias.
 
 ### Agent Mode
 

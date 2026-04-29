@@ -53,6 +53,20 @@ alias gptread='gpterminal read'
 alias gptimagine='gpterminal imagine'
 alias gptstats='gpterminal stats'
 alias gptagent='gpterminal agent'
+alias gptsuggest='gpterminal suggest'
+
+# Inline AI suggestion via Ctrl+G
+_gpterminal_suggest() {
+  local buf="$READLINE_LINE"
+  if [ -z "$buf" ]; then return; fi
+  local result
+  result="$(gpterminal suggest "$buf" 2>/dev/null)"
+  if [ -n "$result" ]; then
+    READLINE_LINE="$result"
+    READLINE_POINT=${#result}
+  fi
+}
+bind -x '"\C-g":"_gpterminal_suggest"'
 
 # Flush history after each command for reliable fix
 export PROMPT_COMMAND="history -a;${PROMPT_COMMAND}"
@@ -77,6 +91,21 @@ alias gptread='gpterminal read'
 alias gptimagine='gpterminal imagine'
 alias gptstats='gpterminal stats'
 alias gptagent='gpterminal agent'
+alias gptsuggest='gpterminal suggest'
+
+# Inline AI suggestion via Ctrl+G
+_gpterminal_suggest() {
+  local buf="$BUFFER"
+  if [[ -z "$buf" ]]; then return; fi
+  local result
+  result="$(gpterminal suggest "$buf" 2>/dev/null)"
+  if [[ -n "$result" ]]; then
+    BUFFER="$result"
+    CURSOR=${#result}
+  fi
+}
+zle -N _gpterminal_suggest
+bindkey '^G' _gpterminal_suggest
 
 # Flush history after each command for reliable fix
 setopt INC_APPEND_HISTORY
@@ -137,6 +166,21 @@ end
 function gptagent --description 'GPTerminal: autonomous agent'
     gpterminal agent $argv
 end
+function gptsuggest --description 'GPTerminal: inline AI command suggestion'
+    gpterminal suggest $argv
+end
+
+# Inline AI suggestion via Ctrl+G
+function _gpterminal_suggest
+    set -l buf (commandline)
+    if test -z "$buf"; return; end
+    set -l result (gpterminal suggest "$buf" 2>/dev/null)
+    if test -n "$result"
+        commandline -r "$result"
+        commandline -C (string length "$result")
+    end
+end
+bind \cg _gpterminal_suggest
 `
 
 const powershellInit = `# GPTerminal shell integration
@@ -158,4 +202,18 @@ function gptread { gpterminal read $args }
 function gptimagine { gpterminal imagine $args }
 function gptstats { gpterminal stats $args }
 function gptagent { gpterminal agent $args }
+function gptsuggest { gpterminal suggest $args }
+
+# Inline AI suggestion via Ctrl+G
+Set-PSReadLineKeyHandler -Chord 'Ctrl+g' -ScriptBlock {
+    $line = $null
+    $cursor = $null
+    [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)
+    if ([string]::IsNullOrWhiteSpace($line)) { return }
+    $result = gpterminal suggest $line 2>$null
+    if ($result) {
+        [Microsoft.PowerShell.PSConsoleReadLine]::RevertLine()
+        [Microsoft.PowerShell.PSConsoleReadLine]::Insert($result.Trim())
+    }
+}
 `
