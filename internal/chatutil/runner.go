@@ -313,6 +313,40 @@ func chatTools(allowWrite bool) []openai.Tool {
 		},
 	}
 
+	tools = append(tools, openai.Tool{
+		Type: openai.ToolTypeFunction,
+		Function: &openai.FunctionDefinition{
+			Name:        "web_search",
+			Description: "Search the web using DuckDuckGo and return the top results. Use this to find current information, documentation, or answers not available locally.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"query": map[string]any{
+						"type":        "string",
+						"description": "The search query.",
+					},
+				},
+				"required": []string{"query"},
+			},
+		},
+	}, openai.Tool{
+		Type: openai.ToolTypeFunction,
+		Function: &openai.FunctionDefinition{
+			Name:        "fetch_url",
+			Description: "Fetch a web page or API endpoint and return its text content. Use this to read documentation, articles, or API responses from a known URL.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"url": map[string]any{
+						"type":        "string",
+						"description": "The URL to fetch (http or https).",
+					},
+				},
+				"required": []string{"url"},
+			},
+		},
+	})
+
 	runDescription := "Run a safe, read-only terminal command for inspection from the current working directory. No shell operators are allowed. Prefer simple commands like git status, git diff, rg, ls, find, cat, pwd, uname, ps, and whoami."
 	if allowWrite {
 		runDescription = "Run a terminal command inside the current working directory. No shell operators are allowed. Read-only commands run directly. Commands that modify files or run project tasks require user approval before execution."
@@ -430,6 +464,32 @@ func (r *Runner) executeToolCall(ctx context.Context, call openai.ToolCall, opts
 			return "Error: " + err.Error()
 		}
 		return out
+
+	case "web_search":
+		var args struct {
+			Query string `json:"query"`
+		}
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+			return "Error: invalid tool arguments: " + err.Error()
+		}
+		out, err := webSearch(ctx, args.Query)
+		if err != nil {
+			return "Error: " + err.Error()
+		}
+		return truncateText(out, maxToolOutputChars)
+
+	case "fetch_url":
+		var args struct {
+			URL string `json:"url"`
+		}
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+			return "Error: invalid tool arguments: " + err.Error()
+		}
+		out, err := fetchURL(ctx, args.URL)
+		if err != nil {
+			return "Error: " + err.Error()
+		}
+		return truncateText(out, maxToolOutputChars)
 
 	default:
 		if r.mcp != nil && r.mcp.HasTool(call.Function.Name) {

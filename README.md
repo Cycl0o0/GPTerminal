@@ -5,7 +5,7 @@ AI-powered terminal assistant that integrates OpenAI GPT or other OpenAI API-com
 ## Features
 
 - **Command Fix** (`gpterminal fix` / `fuck`) - AI-corrects your last failed command
-- **TUI Chat** (`gpterminal chat`) - Interactive chat with markdown rendering, one-shot stdin mode, and safe local tools
+- **TUI Chat** (`gpterminal chat`) - Interactive chat with markdown rendering, one-shot stdin mode, local tools, and web search/fetch
 - **GPTRun** (`gpterminal run "<request>"`) - One-command AI execution with review, risk checks, and optional retry
 - **GPTEdit** (`gpterminal edit <file> <instruction...>`) - AI file editing with diff preview and approval
 - **GPTReview** (`gpterminal review`) - AI review for files, repo diffs, or staged diffs
@@ -24,6 +24,7 @@ AI-powered terminal assistant that integrates OpenAI GPT or other OpenAI API-com
 - **Stats Dashboard** (`gpterminal stats`) - Usage statistics with per-command tracking and optional TUI dashboard
 - **Auto-Update** (`gpterminal update`) - Check for and install updates from GitHub Releases
 - **Custom Templates** (`gpterminal template`) - Define custom AI commands via YAML template files
+- **Web Search & Fetch** - Chat and agent can search the web (DuckDuckGo) and fetch URL content as tools
 - **MCP Support** - Connect Model Context Protocol servers to extend available tools in chat and agent
 - **Enhanced Pipe Mode** - All commands support stdin piping and disable colors when stdout is not a TTY
 - **System-Aware** - Detects OS, kernel, shell, CPU, memory, GPU for context-aware responses
@@ -172,7 +173,7 @@ $ gpterminal resume bugfix
 
 With no arguments, `chat` opens the full-screen TUI with markdown rendering and system context awareness. With a prompt and/or piped stdin, it runs in one-shot mode so you can use it in shell pipelines. Use `--session <name>` to save and resume a named conversation later with `gpterminal resume <name>`.
 
-The chat assistant can also use local tools during a conversation to inspect files, list directories, search text, stream responses, show thinking/tool status, run workspace commands directly from chat, and propose file writes with diff approval. Direct command execution in chat includes risk evaluation plus `yes` / `auto` / `no` approval, with auto-approve only available at or below the same `7/10` threshold used by GPTDo. File and path access is limited to the current working directory.
+The chat assistant can also use local tools during a conversation to inspect files, list directories, search text, search the web, fetch web pages, stream responses, show thinking/tool status, run workspace commands directly from chat, and propose file writes with diff approval. Direct command execution in chat includes risk evaluation plus `yes` / `auto` / `no` approval, with auto-approve only available at or below the same `7/10` threshold used by GPTDo. File and path access is limited to the current working directory.
 
 The chat TUI now shows the active session in the header and supports:
 - `Ctrl+S` to save the current conversation into a named session

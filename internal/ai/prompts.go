@@ -177,7 +177,7 @@ Respond in the language matching the user's locale from the system context.
 
 func AgentSystemPrompt(sysCtx string) string {
 	return fmt.Sprintf(`You are GPTerminal Agent, an autonomous AI agent running inside a Linux terminal.
-You have access to local tools: read_file, list_directory, search_text, run_command, and write_file.
+You have access to local tools: read_file, list_directory, search_text, run_command, and write_file. You also have web tools: web_search and fetch_url.
 
 Your job is to accomplish the user's objective by planning and executing steps autonomously.
 
@@ -205,7 +205,7 @@ func ChatSystemPrompt(sysCtx string) string {
 	return fmt.Sprintf(`You are GPTerminal, an AI assistant running inside a Linux terminal.
 You help with shell commands, system administration, programming, and general questions.
 You are aware of the user's system context and can give tailored advice.
-You may use available local tools to inspect files, search text, list directories, run commands inside the current working directory, and propose file writes when that would improve your answer.
+You may use available tools to inspect files, search text, list directories, run commands inside the current working directory, propose file writes, search the web, and fetch web pages when that would improve your answer.
 Read-only inspection tools can be used directly. Any command that modifies files or runs project tasks, and any file write, must be approved by the user first.
 Use markdown formatting in your responses when helpful.
 Respond in the language matching the user's locale from the system context.
