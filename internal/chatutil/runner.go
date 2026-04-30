@@ -17,6 +17,7 @@ import (
 	"github.com/cycl0o0/GPTerminal/internal/config"
 	"github.com/cycl0o0/GPTerminal/internal/diffutil"
 	"github.com/cycl0o0/GPTerminal/internal/fileutil"
+	"github.com/cycl0o0/GPTerminal/internal/hooks"
 	"github.com/cycl0o0/GPTerminal/internal/mcp"
 	"github.com/cycl0o0/GPTerminal/internal/risk"
 	"github.com/cycl0o0/GPTerminal/internal/system"
@@ -62,6 +63,7 @@ type Runner struct {
 	client  *ai.Client
 	workDir string
 	mcp     *mcp.Registry
+	hooks   *hooks.Registry
 }
 
 func NewRunner(client *ai.Client, sysInfo system.SystemInfo) *Runner {
@@ -86,6 +88,10 @@ func NewRunnerWithMCP(client *ai.Client, sysInfo system.SystemInfo, registry *mc
 
 func (r *Runner) SetMCP(registry *mcp.Registry) {
 	r.mcp = registry
+}
+
+func (r *Runner) SetHooks(registry *hooks.Registry) {
+	r.hooks = registry
 }
 
 func (r *Runner) Complete(ctx context.Context, history []openai.ChatCompletionMessage) (string, []openai.ChatCompletionMessage, error) {
@@ -686,6 +692,14 @@ func (r *Runner) runCommand(ctx context.Context, command string, opts StreamOpti
 }
 
 func (r *Runner) executeCommandArgs(command string, args []string) (string, error) {
+	if r.hooks != nil {
+		r.hooks.Fire(context.Background(), hooks.PreCommand, &hooks.CommandContext{
+			Command: command,
+			Args:    args,
+			WorkDir: r.workDir,
+		})
+	}
+
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Dir = r.workDir
 	out, runErr := cmd.CombinedOutput()
@@ -702,6 +716,15 @@ func (r *Runner) executeCommandArgs(command string, args []string) (string, erro
 		exitCode = exitErr.ExitCode()
 	} else {
 		return "", fmt.Errorf("run command: %w", runErr)
+	}
+
+	if r.hooks != nil {
+		r.hooks.Fire(context.Background(), hooks.PostCommand, &hooks.CommandResult{
+			Command:  command,
+			ExitCode: exitCode,
+			Output:   result,
+			Err:      runErr,
+		})
 	}
 
 	return truncateText(fmt.Sprintf("Command: %s\nExit code: %d\nOutput:\n%s", strings.TrimSpace(command), exitCode, result), maxToolOutputChars), nil

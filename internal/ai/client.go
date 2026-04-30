@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cycl0o0/GPTerminal/internal/config"
+	gperr "github.com/cycl0o0/GPTerminal/internal/errors"
 	"github.com/cycl0o0/GPTerminal/internal/usage"
 	openai "github.com/sashabaranov/go-openai"
 )
@@ -43,10 +44,10 @@ func (c *Client) Complete(ctx context.Context, messages []openai.ChatCompletionM
 		MaxTokens:   config.MaxTokens(),
 	})
 	if err != nil {
-		return "", fmt.Errorf("OpenAI API error: %w", err)
+		return "", &gperr.APIError{Op: "complete", Message: "API error", Err: err}
 	}
 	if len(resp.Choices) == 0 {
-		return "", fmt.Errorf("no response from OpenAI")
+		return "", &gperr.APIError{Op: "complete", Message: "no response from API"}
 	}
 
 	usage.Global().RecordUsage(model, resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
@@ -62,7 +63,7 @@ func (c *Client) CreateChatCompletion(ctx context.Context, req openai.ChatComple
 
 	resp, err := c.client.CreateChatCompletion(ctx, req)
 	if err != nil {
-		return openai.ChatCompletionResponse{}, fmt.Errorf("OpenAI API error: %w", err)
+		return openai.ChatCompletionResponse{}, &gperr.APIError{Op: "complete", Message: "API error", Err: err}
 	}
 	usage.Global().RecordUsage(req.Model, resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
 	usage.Global().WarnIfNeeded()
@@ -76,7 +77,7 @@ func (c *Client) CreateChatCompletionStream(ctx context.Context, req openai.Chat
 
 	stream, err := c.client.CreateChatCompletionStream(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("OpenAI stream error: %w", err)
+		return nil, &gperr.APIError{Op: "stream", Message: "stream error", Err: err}
 	}
 	return stream, nil
 }
@@ -106,7 +107,7 @@ func (c *Client) StreamComplete(ctx context.Context, messages []openai.ChatCompl
 		},
 	})
 	if err != nil {
-		return "", fmt.Errorf("OpenAI stream error: %w", err)
+		return "", &gperr.APIError{Op: "stream", Message: "stream error", Err: err}
 	}
 	defer stream.Close()
 
@@ -118,7 +119,7 @@ func (c *Client) StreamComplete(ctx context.Context, messages []openai.ChatCompl
 			break
 		}
 		if err != nil {
-			return full, fmt.Errorf("stream recv error: %w", err)
+			return full, &gperr.APIError{Op: "stream", Message: "recv error", Err: err}
 		}
 		if resp.Usage != nil {
 			streamUsage = resp.Usage
@@ -176,10 +177,10 @@ func (c *Client) CompleteVision(ctx context.Context, systemPrompt, question, bas
 		MaxTokens:   config.MaxTokens(),
 	})
 	if err != nil {
-		return "", fmt.Errorf("OpenAI vision API error: %w", err)
+		return "", &gperr.APIError{Op: "vision", Message: "API error", Err: err}
 	}
 	if len(resp.Choices) == 0 {
-		return "", fmt.Errorf("no response from OpenAI")
+		return "", &gperr.APIError{Op: "vision", Message: "no response from API"}
 	}
 
 	usage.Global().RecordUsage(model, resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
@@ -216,7 +217,7 @@ func (c *Client) CreateImage(ctx context.Context, prompt, model, size string, n 
 
 	resp, err := c.client.CreateImage(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("OpenAI image API error: %w", err)
+		return nil, &gperr.APIError{Op: "image", Message: "API error", Err: err}
 	}
 
 	usage.Global().RecordImageUsage(model, size, len(resp.Data))
@@ -239,7 +240,7 @@ func (c *Client) CreateTranscription(ctx context.Context, request openai.AudioRe
 
 	resp, err := c.client.CreateTranscription(ctx, request)
 	if err != nil {
-		return openai.AudioResponse{}, fmt.Errorf("OpenAI transcription API error: %w", err)
+		return openai.AudioResponse{}, &gperr.APIError{Op: "transcription", Message: "API error", Err: err}
 	}
 	return resp, nil
 }
@@ -251,7 +252,7 @@ func (c *Client) CreateTranslation(ctx context.Context, request openai.AudioRequ
 
 	resp, err := c.client.CreateTranslation(ctx, request)
 	if err != nil {
-		return openai.AudioResponse{}, fmt.Errorf("OpenAI translation API error: %w", err)
+		return openai.AudioResponse{}, &gperr.APIError{Op: "translation", Message: "API error", Err: err}
 	}
 	return resp, nil
 }
@@ -263,7 +264,7 @@ func (c *Client) CreateSpeech(ctx context.Context, request openai.CreateSpeechRe
 
 	resp, err := c.client.CreateSpeech(ctx, request)
 	if err != nil {
-		return nil, fmt.Errorf("OpenAI speech API error: %w", err)
+		return nil, &gperr.APIError{Op: "speech", Message: "API error", Err: err}
 	}
 	defer resp.Close()
 

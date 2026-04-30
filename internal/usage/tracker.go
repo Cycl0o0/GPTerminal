@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cycl0o0/GPTerminal/internal/config"
+	gperr "github.com/cycl0o0/GPTerminal/internal/errors"
 )
 
 // CommandStats holds per-command usage statistics.
@@ -164,7 +165,7 @@ func (t *Tracker) CheckBudget() error {
 		return nil
 	}
 	if t.data.TotalCost >= limit {
-		return fmt.Errorf("monthly cost limit reached ($%.4f / $%.2f). Adjust with: gpterminal config set cost_limit <amount>", t.data.TotalCost, limit)
+		return &gperr.BudgetError{Limit: limit, Current: t.data.TotalCost}
 	}
 	return nil
 }

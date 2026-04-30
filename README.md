@@ -25,7 +25,8 @@ AI-powered terminal assistant that integrates OpenAI GPT or other OpenAI API-com
 - **Auto-Update** (`gpterminal update`) - Check for and install updates from GitHub Releases
 - **Custom Templates** (`gpterminal template`) - Define custom AI commands via YAML template files
 - **Web Search & Fetch** - Chat and agent can search the web (DuckDuckGo) and fetch URL content as tools
-- **MCP Support** - Connect Model Context Protocol servers to extend available tools in chat and agent
+- **MCP Support** - Connect Model Context Protocol servers to extend available tools in chat and agent, with automatic reconnect on server crash
+- **Command Hooks** - Run custom shell commands before/after command execution via config
 - **Enhanced Pipe Mode** - All commands support stdin piping and disable colors when stdout is not a TTY
 - **System-Aware** - Detects OS, kernel, shell, CPU, memory, GPU for context-aware responses
 
@@ -398,7 +399,21 @@ mcp_servers:
       GITHUB_TOKEN: "ghp_..."
 ```
 
-MCP tools are automatically available in `chat` and `agent` commands.
+MCP tools are automatically available in `chat` and `agent` commands. If an MCP server crashes mid-session, GPTerminal will automatically reconnect and retry the failed call.
+
+### Command Hooks
+
+Configure shell commands that run before or after command execution in `~/.config/gpterminal/config.yaml`:
+
+```yaml
+hooks:
+  pre_command:
+    - command: "echo 'running: $GPT_COMMAND'"
+  post_command:
+    - command: "echo 'done: exit $GPT_EXIT_CODE'"
+```
+
+Available environment variables: `GPT_COMMAND`, `GPT_WORK_DIR`, `GPT_EXIT_CODE` (post only), `GPT_EVENT`.
 
 ### Enhanced Pipe Mode
 

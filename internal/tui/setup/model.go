@@ -34,9 +34,12 @@ type Model struct {
 	shell   string
 	err     string
 
-	savedAPIKey  bool
-	savedBaseURL bool
-	savedModel   bool
+	savedAPIKey    bool
+	savedBaseURL   bool
+	savedModel     bool
+	shellInstalled bool
+	shellSkipped   bool
+	shellError     string
 }
 
 func NewModel() Model {
@@ -151,6 +154,13 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case stepShell:
+		if m.shell != "" {
+			if err := m.autoInstallShell(); err != nil {
+				m.shellError = err.Error()
+			} else {
+				m.shellInstalled = true
+			}
+		}
 		m.step = stepDone
 		return m, nil
 
@@ -180,6 +190,11 @@ func (m Model) handleSkip() (tea.Model, tea.Cmd) {
 
 	case stepModel:
 		m.step = stepShell
+		return m, nil
+
+	case stepShell:
+		m.shellSkipped = true
+		m.step = stepDone
 		return m, nil
 	}
 	return m, nil
@@ -324,7 +339,7 @@ func (m Model) viewShell() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(m.navHints("Enter: continue", "Esc: quit"))
+	b.WriteString(m.navHints("Enter: auto-install", "Tab: skip", "Esc: quit"))
 
 	return b.String()
 }
@@ -354,6 +369,14 @@ func (m Model) viewDone() string {
 		b.WriteString(fmt.Sprintf("  %s Model       %s\n", check, m.model))
 	} else {
 		b.WriteString(fmt.Sprintf("  %s Model       %s (default)\n", dash, m.model))
+	}
+
+	if m.shellInstalled {
+		b.WriteString(fmt.Sprintf("  %s Shell      installed to %s\n", check, shellRCFile(m.shell)))
+	} else if m.shellError != "" {
+		b.WriteString(fmt.Sprintf("  %s Shell      auto-install failed: %s\n", dash, m.shellError))
+	} else if m.shellSkipped {
+		b.WriteString(fmt.Sprintf("  %s Shell      skipped (add manually)\n", dash))
 	}
 
 	b.WriteString("\n")
@@ -397,6 +420,57 @@ func detectShell() string {
 		return ""
 	}
 	return filepath.Base(shell)
+}
+
+func (m Model) autoInstallShell() error {
+	rcFile := shellRCFile(m.shell)
+	if rcFile == "your shell rc file" {
+		return fmt.Errorf("unsupported shell: %s", m.shell)
+	}
+
+	// Expand ~ to $HOME
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve home dir: %w", err)
+	}
+	if strings.HasPrefix(rcFile, "~/") {
+		rcFile = filepath.Join(home, rcFile[2:])
+	}
+
+	evalLine := fmt.Sprintf(`eval "$(gpterminal init %s)"`, m.shell)
+	if m.shell == "fish" {
+		evalLine = "gpterminal init fish | source"
+	}
+
+	// Read existing contents and check if already present.
+	data, err := os.ReadFile(rcFile)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read %s: %w", rcFile, err)
+	}
+	if strings.Contains(string(data), evalLine) {
+		return nil // already installed
+	}
+
+	// Ensure parent directory exists (for fish).
+	if dir := filepath.Dir(rcFile); dir != "" {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("create dir %s: %w", dir, err)
+		}
+	}
+
+	f, err := os.OpenFile(rcFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", rcFile, err)
+	}
+	defer f.Close()
+
+	// Add newline before if file exists and doesn't end with newline.
+	if len(data) > 0 && data[len(data)-1] != '\n' {
+		f.WriteString("\n")
+	}
+
+	_, err = f.WriteString(evalLine + "\n")
+	return err
 }
 
 func shellRCFile(shell string) string {

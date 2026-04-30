@@ -23,3 +23,11 @@ usage.json
 
 # Go
 vendor/
+
+# Code review
+.code-review-graph/
+
+# AI agent instructions
+CLAUDE.md
+AGENTS.md
+GEMINI.md

@@ -2,9 +2,12 @@ package mcp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"strings"
 
+	gperr "github.com/cycl0o0/GPTerminal/internal/errors"
 	openai "github.com/sashabaranov/go-openai"
 	"github.com/spf13/viper"
 )
@@ -127,6 +130,17 @@ func (r *Registry) HandleToolCall(name, arguments string) (string, error) {
 	originalName := rt.def.Name
 	result, err := rt.client.CallTool(originalName, args)
 	if err != nil {
+		var mcpErr *gperr.MCPError
+		if errors.As(err, &mcpErr) {
+			// Attempt reconnect + retry once
+			fmt.Fprintf(os.Stderr, "MCP tool %q failed, attempting reconnect: %v\n", name, err)
+			if restartErr := rt.client.restart(); restartErr == nil {
+				result, err = rt.client.CallTool(originalName, args)
+				if err == nil {
+					return result, nil
+				}
+			}
+		}
 		return "Error: " + err.Error(), nil
 	}
 	return result, nil

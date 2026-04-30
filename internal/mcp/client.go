@@ -9,6 +9,9 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
+
+	gperr "github.com/cycl0o0/GPTerminal/internal/errors"
 )
 
 type ServerConfig struct {
@@ -18,20 +21,23 @@ type ServerConfig struct {
 }
 
 type Client struct {
-	name   string
-	config ServerConfig
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout *bufio.Reader
-	nextID int
-	mu     sync.Mutex
+	name       string
+	config     ServerConfig
+	cmd        *exec.Cmd
+	stdin      io.WriteCloser
+	stdout     *bufio.Reader
+	nextID     int
+	mu         sync.Mutex
+	alive      bool
+	maxRetries int
 }
 
 func NewClient(name string, cfg ServerConfig) *Client {
 	return &Client{
-		name:   name,
-		config: cfg,
-		nextID: 1,
+		name:       name,
+		config:     cfg,
+		nextID:     1,
+		maxRetries: 1,
 	}
 }
 
@@ -48,31 +54,32 @@ func (c *Client) Start() error {
 	var err error
 	c.stdin, err = c.cmd.StdinPipe()
 	if err != nil {
-		return fmt.Errorf("mcp %s: stdin pipe: %w", c.name, err)
+		return &gperr.MCPError{Server: c.name, Op: "start", Err: fmt.Errorf("stdin pipe: %w", err)}
 	}
 
 	stdout, err := c.cmd.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("mcp %s: stdout pipe: %w", c.name, err)
+		return &gperr.MCPError{Server: c.name, Op: "start", Err: fmt.Errorf("stdout pipe: %w", err)}
 	}
 	c.stdout = bufio.NewReader(stdout)
 
 	if err := c.cmd.Start(); err != nil {
-		return fmt.Errorf("mcp %s: start: %w", c.name, err)
+		return &gperr.MCPError{Server: c.name, Op: "start", Err: err}
 	}
+	c.alive = true
 
 	// Send initialize
-	resp, err := c.call("initialize", map[string]interface{}{
+	resp, err := c.callRaw("initialize", map[string]interface{}{
 		"protocolVersion": "2024-11-05",
 		"capabilities":    map[string]interface{}{},
 		"clientInfo": map[string]interface{}{
 			"name":    "gpterminal",
-			"version": "2.2.0",
+			"version": "2.4.1",
 		},
 	})
 	if err != nil {
 		c.Close()
-		return fmt.Errorf("mcp %s: initialize: %w", c.name, err)
+		return &gperr.MCPError{Server: c.name, Op: "start", Err: fmt.Errorf("initialize: %w", err)}
 	}
 	_ = resp // We don't need to parse the result
 
@@ -90,7 +97,7 @@ func (c *Client) ListTools() ([]ToolDef, error) {
 
 	var result toolsListResult
 	if err := json.Unmarshal(resp, &result); err != nil {
-		return nil, fmt.Errorf("mcp %s: parse tools: %w", c.name, err)
+		return nil, &gperr.MCPError{Server: c.name, Op: "call", Err: fmt.Errorf("parse tools: %w", err)}
 	}
 	return result.Tools, nil
 }
@@ -106,7 +113,7 @@ func (c *Client) CallTool(name string, args map[string]interface{}) (string, err
 
 	var result CallResult
 	if err := json.Unmarshal(resp, &result); err != nil {
-		return "", fmt.Errorf("mcp %s: parse tool result: %w", c.name, err)
+		return "", &gperr.MCPError{Server: c.name, Op: "call", Err: fmt.Errorf("parse tool result: %w", err)}
 	}
 
 	var parts []string
@@ -118,12 +125,13 @@ func (c *Client) CallTool(name string, args map[string]interface{}) (string, err
 	text := strings.Join(parts, "\n")
 
 	if result.IsError {
-		return "", fmt.Errorf("mcp tool error: %s", text)
+		return "", &gperr.MCPError{Server: c.name, Op: "call", Err: fmt.Errorf("tool error: %s", text)}
 	}
 	return text, nil
 }
 
 func (c *Client) Close() error {
+	c.alive = false
 	if c.stdin != nil {
 		c.stdin.Close()
 	}
@@ -134,7 +142,45 @@ func (c *Client) Close() error {
 	return nil
 }
 
+// isAlive checks if the MCP server process is still running.
+func (c *Client) isAlive() bool {
+	if c.cmd == nil || c.cmd.Process == nil {
+		return false
+	}
+	return c.cmd.Process.Signal(syscall.Signal(0)) == nil
+}
+
+// restart closes the existing process and re-runs Start.
+func (c *Client) restart() error {
+	fmt.Fprintf(os.Stderr, "mcp %s: reconnecting...\n", c.name)
+	c.Close()
+	return c.Start()
+}
+
+// call wraps callRaw with reconnect logic.
 func (c *Client) call(method string, params interface{}) (json.RawMessage, error) {
+	resp, err := c.callRaw(method, params)
+	if err == nil {
+		return resp, nil
+	}
+
+	// Only retry on I/O errors when process is dead.
+	if c.isAlive() {
+		return nil, &gperr.MCPError{Server: c.name, Op: "call", Err: err}
+	}
+
+	if restartErr := c.restart(); restartErr != nil {
+		return nil, &gperr.MCPError{Server: c.name, Op: "call", Err: fmt.Errorf("reconnect failed: %w (original: %v)", restartErr, err)}
+	}
+
+	resp, err = c.callRaw(method, params)
+	if err != nil {
+		return nil, &gperr.MCPError{Server: c.name, Op: "call", Err: fmt.Errorf("retry failed: %w", err)}
+	}
+	return resp, nil
+}
+
+func (c *Client) callRaw(method string, params interface{}) (json.RawMessage, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -154,18 +200,18 @@ func (c *Client) call(method string, params interface{}) (json.RawMessage, error
 	}
 
 	if _, err := c.stdin.Write(append(data, '\n')); err != nil {
-		return nil, fmt.Errorf("mcp %s: write: %w", c.name, err)
+		return nil, fmt.Errorf("write: %w", err)
 	}
 
 	// Read response line
 	line, err := c.stdout.ReadBytes('\n')
 	if err != nil {
-		return nil, fmt.Errorf("mcp %s: read: %w", c.name, err)
+		return nil, fmt.Errorf("read: %w", err)
 	}
 
 	var resp Response
 	if err := json.Unmarshal(line, &resp); err != nil {
-		return nil, fmt.Errorf("mcp %s: parse response: %w", c.name, err)
+		return nil, fmt.Errorf("parse response: %w", err)
 	}
 
 	if resp.Error != nil {

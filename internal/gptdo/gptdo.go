@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/cycl0o0/GPTerminal/internal/ai"
+	"github.com/cycl0o0/GPTerminal/internal/hooks"
 	"github.com/cycl0o0/GPTerminal/internal/risk"
 	"github.com/cycl0o0/GPTerminal/internal/session"
 	"github.com/cycl0o0/GPTerminal/internal/system"
@@ -34,6 +35,7 @@ type runner struct {
 	reader      *bufio.Reader
 	autoApprove bool
 	cwd         string
+	hooks       *hooks.Registry
 }
 
 type commandExecution struct {
@@ -57,6 +59,7 @@ func Run(ctx context.Context, request, sessionName string) error {
 	r := runner{
 		reader: bufio.NewReader(os.Stdin),
 		cwd:    cwd,
+		hooks:  hooks.NewRegistry(),
 	}
 
 	messages := []openai.ChatCompletionMessage{
@@ -91,6 +94,7 @@ func Resume(ctx context.Context, sessionName string) error {
 		reader:      bufio.NewReader(os.Stdin),
 		autoApprove: record.GptDo.AutoApprove,
 		cwd:         record.GptDo.CWD,
+		hooks:       hooks.NewRegistry(),
 	}
 
 	fmt.Printf("Resuming session: %s\n", record.Name)
@@ -323,10 +327,31 @@ func extractJSONObject(raw string) (string, error) {
 }
 
 func (r *runner) executeCommand(command string) (system.ExecResult, error) {
-	if isPureCDCommand(command) {
-		return r.executeCD(command)
+	if r.hooks != nil {
+		r.hooks.Fire(context.Background(), hooks.PreCommand, &hooks.CommandContext{
+			Command: command,
+			WorkDir: r.cwd,
+		})
 	}
-	return system.ExecuteCaptureInDir(command, r.cwd)
+
+	var result system.ExecResult
+	var err error
+	if isPureCDCommand(command) {
+		result, err = r.executeCD(command)
+	} else {
+		result, err = system.ExecuteCaptureInDir(command, r.cwd)
+	}
+
+	if r.hooks != nil {
+		r.hooks.Fire(context.Background(), hooks.PostCommand, &hooks.CommandResult{
+			Command:  command,
+			ExitCode: result.ExitCode,
+			Output:   result.Output,
+			Err:      err,
+		})
+	}
+
+	return result, err
 }
 
 func (r *runner) executeCD(command string) (system.ExecResult, error) {
