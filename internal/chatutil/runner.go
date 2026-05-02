@@ -379,6 +379,27 @@ func chatTools(allowWrite bool) []openai.Tool {
 		tools = append(tools, openai.Tool{
 			Type: openai.ToolTypeFunction,
 			Function: &openai.FunctionDefinition{
+				Name:        "execute_code",
+				Description: "Write and execute a code snippet locally. Supported languages: python, javascript, bash, ruby, go. Returns stdout, stderr, and exit code. User must approve before execution.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"language": map[string]any{
+							"type":        "string",
+							"description": "One of: python, javascript, bash, ruby, go.",
+						},
+						"code": map[string]any{
+							"type":        "string",
+							"description": "The source code to execute.",
+						},
+					},
+					"required": []string{"language", "code"},
+				},
+			},
+		})
+		tools = append(tools, openai.Tool{
+			Type: openai.ToolTypeFunction,
+			Function: &openai.FunctionDefinition{
 				Name:        "write_file",
 				Description: "Write or overwrite a text file inside the current working directory. The user will see a diff and must approve the write before it is applied.",
 				Parameters: map[string]any{
@@ -452,6 +473,20 @@ func (r *Runner) executeToolCall(ctx context.Context, call openai.ToolCall, opts
 			return "Error: invalid tool arguments: " + err.Error()
 		}
 		out, err := r.runCommand(ctx, args.Command, opts)
+		if err != nil {
+			return "Error: " + err.Error()
+		}
+		return out
+
+	case "execute_code":
+		var args struct {
+			Language string `json:"language"`
+			Code     string `json:"code"`
+		}
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+			return "Error: invalid tool arguments: " + err.Error()
+		}
+		out, err := r.executeCode(ctx, args.Language, args.Code, opts)
 		if err != nil {
 			return "Error: " + err.Error()
 		}
@@ -777,6 +812,100 @@ func (r *Runner) writeFile(path, content string, opts StreamOptions) (string, er
 	}
 
 	return truncateText(fmt.Sprintf("Wrote file: %s\nDiff:\n%s", resolved, diff), maxToolOutputChars), nil
+}
+
+type langConfig struct {
+	binary string
+	subcmd string // non-empty means prepend as argument (e.g. "run" for `go run`)
+	ext    string
+}
+
+var langMap = map[string]langConfig{
+	"python":     {binary: "python3", ext: ".py"},
+	"python3":    {binary: "python3", ext: ".py"},
+	"javascript": {binary: "node", ext: ".js"},
+	"js":         {binary: "node", ext: ".js"},
+	"node":       {binary: "node", ext: ".js"},
+	"bash":       {binary: "bash", ext: ".sh"},
+	"sh":         {binary: "bash", ext: ".sh"},
+	"ruby":       {binary: "ruby", ext: ".rb"},
+	"go":         {binary: "go", subcmd: "run", ext: ".go"},
+}
+
+func (r *Runner) executeCode(ctx context.Context, language, code string, opts StreamOptions) (string, error) {
+	if !opts.AllowWriteTools {
+		return "", fmt.Errorf("execute_code is not available in read-only chat mode")
+	}
+	if opts.ApproveCommand == nil {
+		return "", fmt.Errorf("execute_code requires an approval-capable chat session")
+	}
+
+	lang := strings.ToLower(strings.TrimSpace(language))
+	lc, ok := langMap[lang]
+	if !ok {
+		return "", fmt.Errorf("unsupported language %q; supported: python, javascript, bash, ruby, go", language)
+	}
+
+	binPath, err := exec.LookPath(lc.binary)
+	if err != nil {
+		return "", fmt.Errorf("interpreter %q not found: %w", lc.binary, err)
+	}
+
+	tmp, err := os.CreateTemp("", "gpterminal-code-*"+lc.ext)
+	if err != nil {
+		return "", fmt.Errorf("create temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+
+	if _, err := tmp.WriteString(code); err != nil {
+		tmp.Close()
+		return "", fmt.Errorf("write temp file: %w", err)
+	}
+	tmp.Close()
+
+	displayCmd := lc.binary
+	if lc.subcmd != "" {
+		displayCmd += " " + lc.subcmd
+	}
+	displayCmd += " " + tmpName
+
+	decision, err := opts.ApproveCommand(CommandApprovalRequest{
+		Command: displayCmd,
+	})
+	if err != nil {
+		return "", err
+	}
+	if !decision.Approved {
+		return "Code execution rejected by user.", nil
+	}
+
+	var cmdArgs []string
+	if lc.subcmd != "" {
+		cmdArgs = []string{binPath, lc.subcmd, tmpName}
+	} else {
+		cmdArgs = []string{binPath, tmpName}
+	}
+
+	cmd := exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
+	cmd.Dir = r.workDir
+	out, runErr := cmd.CombinedOutput()
+
+	result := strings.TrimSpace(string(out))
+	if result == "" {
+		result = "(no output)"
+	}
+
+	var exitCode int
+	if runErr != nil {
+		if exitErr, ok := runErr.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			return "", fmt.Errorf("execute code: %w", runErr)
+		}
+	}
+
+	return truncateText(fmt.Sprintf("[%s]\nExit code: %d\nOutput:\n%s", lang, exitCode, result), maxToolOutputChars), nil
 }
 
 func mergeToolCalls(dest map[int]*openai.ToolCall, deltas []openai.ToolCall) {

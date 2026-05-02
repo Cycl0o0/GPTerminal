@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"os"
 	"sort"
 	"time"
 
+	"github.com/cycl0o0/GPTerminal/internal/ai"
 	"github.com/cycl0o0/GPTerminal/internal/config"
 	"github.com/cycl0o0/GPTerminal/internal/usage"
 	"github.com/spf13/cobra"
@@ -150,6 +152,39 @@ var usageCmd = &cobra.Command{
 	},
 }
 
+var modelsCmd = &cobra.Command{
+	Use:   "models",
+	Short: "List available models from the API",
+	Run: func(cmd *cobra.Command, args []string) {
+		client, err := ai.NewClient()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			os.Exit(1)
+		}
+		ids, err := client.ListModels(context.Background())
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			os.Exit(1)
+		}
+		for _, id := range ids {
+			fmt.Println(id)
+		}
+	},
+}
+
+var setModelCmd = &cobra.Command{
+	Use:   "set-model <model>",
+	Short: "Set the model to use",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		if err := config.SaveModel(args[0]); err != nil {
+			fmt.Fprintln(os.Stderr, "Error saving model:", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Model set to %s\n", args[0])
+	},
+}
+
 func sortedKeys(m map[string]float64) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -167,5 +202,7 @@ func init() {
 	configCmd.AddCommand(setBaseURLCmd)
 	configCmd.AddCommand(showConfigCmd)
 	configCmd.AddCommand(usageCmd)
+	configCmd.AddCommand(modelsCmd)
+	configCmd.AddCommand(setModelCmd)
 	rootCmd.AddCommand(configCmd)
 }

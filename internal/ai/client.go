@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/cycl0o0/GPTerminal/internal/config"
@@ -231,6 +232,19 @@ func (c *Client) CreateImage(ctx context.Context, prompt, model, size string, n 
 		}
 	}
 	return results, nil
+}
+
+func (c *Client) ListModels(ctx context.Context) ([]string, error) {
+	list, err := c.client.ListModels(ctx)
+	if err != nil {
+		return nil, &gperr.APIError{Op: "list-models", Message: "API error", Err: err}
+	}
+	ids := make([]string, len(list.Models))
+	for i, m := range list.Models {
+		ids[i] = m.ID
+	}
+	sort.Strings(ids)
+	return ids, nil
 }
 
 func (c *Client) CreateTranscription(ctx context.Context, request openai.AudioRequest) (openai.AudioResponse, error) {
