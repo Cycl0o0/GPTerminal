@@ -17,11 +17,31 @@ import (
 var (
 	usageDaily  bool
 	usageWeekly bool
+	listModels  bool
 )
 
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Manage GPTerminal configuration",
+	Run: func(cmd *cobra.Command, args []string) {
+		if listModels {
+			client, err := ai.NewClient()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			ids, err := client.ListModels(context.Background())
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			for _, id := range ids {
+				fmt.Println(id)
+			}
+			return
+		}
+		cmd.Help()
+	},
 }
 
 var setKeyCmd = &cobra.Command{
@@ -197,6 +217,7 @@ func sortedKeys(m map[string]float64) []string {
 func init() {
 	usageCmd.Flags().BoolVar(&usageDaily, "daily", false, "Show daily cost breakdown")
 	usageCmd.Flags().BoolVar(&usageWeekly, "weekly", false, "Show weekly cost breakdown")
+	configCmd.Flags().BoolVar(&listModels, "list-models", false, "List available models from the API")
 
 	configCmd.AddCommand(setKeyCmd)
 	configCmd.AddCommand(setBaseURLCmd)

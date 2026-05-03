@@ -1,14 +1,17 @@
 package setup
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/cycl0o0/GPTerminal/internal/ai"
 	"github.com/cycl0o0/GPTerminal/internal/config"
 )
 
@@ -20,6 +23,24 @@ const (
 	stepShell
 	stepDone
 )
+
+type modelsLoadedMsg struct {
+	models []string
+	err    error
+}
+
+func fetchModelsCmd() tea.Cmd {
+	return func() tea.Msg {
+		client, err := ai.NewClient()
+		if err != nil {
+			return modelsLoadedMsg{err: err}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		models, err := client.ListModels(ctx)
+		return modelsLoadedMsg{models: models, err: err}
+	}
+}
 
 type Model struct {
 	step      int
@@ -33,6 +54,11 @@ type Model struct {
 	model   string
 	shell   string
 	err     string
+
+	availableModels []string
+	fetchingModels  bool
+	modelCursor     int
+	modelPickMode   bool
 
 	savedAPIKey    bool
 	savedBaseURL   bool
@@ -71,8 +97,48 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ready = true
 		return m, nil
 
+	case modelsLoadedMsg:
+		m.fetchingModels = false
+		if msg.err == nil && len(msg.models) > 0 {
+			m.availableModels = msg.models
+			m.modelPickMode = true
+			for i, id := range msg.models {
+				if id == m.model {
+					m.modelCursor = i
+					break
+				}
+			}
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		m.err = ""
+
+		// Pick mode: ↑/↓ navigation, Tab to switch to manual input
+		if m.step == stepModel && m.modelPickMode {
+			switch msg.Type {
+			case tea.KeyCtrlC, tea.KeyEsc:
+				return m, tea.Quit
+			case tea.KeyUp:
+				if m.modelCursor > 0 {
+					m.modelCursor--
+				}
+				return m, nil
+			case tea.KeyDown:
+				if m.modelCursor < len(m.availableModels)-1 {
+					m.modelCursor++
+				}
+				return m, nil
+			case tea.KeyTab:
+				m.modelPickMode = false
+				m.textInput.SetValue(m.availableModels[m.modelCursor])
+				m.textInput.Focus()
+				return m, textinput.Blink
+			case tea.KeyEnter:
+				return m.handleEnter()
+			}
+			return m, nil
+		}
 
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
@@ -86,7 +152,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if m.step >= stepAPIKey && m.step <= stepModel {
+	if m.step >= stepAPIKey && m.step <= stepModel && !m.modelPickMode {
 		var cmd tea.Cmd
 		m.textInput, cmd = m.textInput.Update(msg)
 		return m, cmd
@@ -135,13 +201,19 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			m.savedBaseURL = true
 		}
 		m.step = stepModel
+		m.fetchingModels = true
 		m.textInput.SetValue(m.model)
 		m.textInput.Placeholder = config.DefaultModel
 		m.textInput.Focus()
-		return m, textinput.Blink
+		return m, tea.Batch(textinput.Blink, fetchModelsCmd())
 
 	case stepModel:
-		val := strings.TrimSpace(m.textInput.Value())
+		var val string
+		if m.modelPickMode && len(m.availableModels) > 0 {
+			val = m.availableModels[m.modelCursor]
+		} else {
+			val = strings.TrimSpace(m.textInput.Value())
+		}
 		if val != "" && val != config.DefaultModel {
 			if err := config.SaveModel(val); err != nil {
 				m.err = fmt.Sprintf("Failed to save: %v", err)
@@ -183,10 +255,11 @@ func (m Model) handleSkip() (tea.Model, tea.Cmd) {
 
 	case stepBaseURL:
 		m.step = stepModel
+		m.fetchingModels = true
 		m.textInput.SetValue(m.model)
 		m.textInput.Placeholder = config.DefaultModel
 		m.textInput.Focus()
-		return m, textinput.Blink
+		return m, tea.Batch(textinput.Blink, fetchModelsCmd())
 
 	case stepModel:
 		m.step = stepShell
@@ -297,6 +370,50 @@ func (m Model) viewModel() string {
 
 	b.WriteString(m.stepHeader("Step 3/4", "Model"))
 	b.WriteString("\n\n")
+
+	if m.modelPickMode && len(m.availableModels) > 0 {
+		b.WriteString("Select a model:\n\n")
+
+		const windowSize = 8
+		total := len(m.availableModels)
+		start := m.modelCursor - windowSize/2
+		if start < 0 {
+			start = 0
+		}
+		end := start + windowSize
+		if end > total {
+			end = total
+			start = max(0, end-windowSize)
+		}
+
+		if start > 0 {
+			b.WriteString(dimStyle.Render(fmt.Sprintf("  (%d more above)\n", start)))
+		}
+		for i := start; i < end; i++ {
+			if i == m.modelCursor {
+				b.WriteString(accentStyle.Render(fmt.Sprintf("  > %s\n", m.availableModels[i])))
+			} else {
+				b.WriteString(fmt.Sprintf("    %s\n", m.availableModels[i]))
+			}
+		}
+		if end < total {
+			b.WriteString(dimStyle.Render(fmt.Sprintf("  (%d more below)\n", total-end)))
+		}
+
+		b.WriteString("\n")
+		if m.err != "" {
+			b.WriteString(errorStyle.Render(m.err))
+			b.WriteString("\n\n")
+		}
+		b.WriteString(m.navHints("↑/↓: navigate", "Enter: select", "Tab: type manually", "Esc: quit"))
+		return b.String()
+	}
+
+	if m.fetchingModels {
+		b.WriteString(dimStyle.Render("Fetching available models..."))
+		b.WriteString("\n\n")
+	}
+
 	b.WriteString("Which model should GPTerminal use?\n")
 	b.WriteString(dimStyle.Render("Examples: gpt-4o, gpt-4o-mini, llama3, deepseek-r1"))
 	b.WriteString("\n\n")
@@ -309,7 +426,6 @@ func (m Model) viewModel() string {
 	}
 
 	b.WriteString(m.navHints("Enter: save", "Tab: skip (keep default)", "Esc: quit"))
-
 	return b.String()
 }
 

@@ -375,28 +375,29 @@ func chatTools(allowWrite bool) []openai.Tool {
 		},
 	})
 
-	if allowWrite {
-		tools = append(tools, openai.Tool{
-			Type: openai.ToolTypeFunction,
-			Function: &openai.FunctionDefinition{
-				Name:        "execute_code",
-				Description: "Write and execute a code snippet locally. Supported languages: python, javascript, bash, ruby, go. Returns stdout, stderr, and exit code. User must approve before execution.",
-				Parameters: map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"language": map[string]any{
-							"type":        "string",
-							"description": "One of: python, javascript, bash, ruby, go.",
-						},
-						"code": map[string]any{
-							"type":        "string",
-							"description": "The source code to execute.",
-						},
+	tools = append(tools, openai.Tool{
+		Type: openai.ToolTypeFunction,
+		Function: &openai.FunctionDefinition{
+			Name:        "execute_code",
+			Description: "Write and execute a code snippet locally. Supported languages: python, javascript, bash, ruby, go. Returns stdout, stderr, and exit code. User must approve before execution.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"language": map[string]any{
+						"type":        "string",
+						"description": "One of: python, javascript, bash, ruby, go.",
 					},
-					"required": []string{"language", "code"},
+					"code": map[string]any{
+						"type":        "string",
+						"description": "The source code to execute.",
+					},
 				},
+				"required": []string{"language", "code"},
 			},
-		})
+		},
+	})
+
+	if allowWrite {
 		tools = append(tools, openai.Tool{
 			Type: openai.ToolTypeFunction,
 			Function: &openai.FunctionDefinition{
