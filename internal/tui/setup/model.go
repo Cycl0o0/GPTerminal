@@ -20,6 +20,9 @@ const (
 	stepAPIKey
 	stepBaseURL
 	stepModel
+	stepImageModel
+	stepVoice
+	stepRealtimeModel
 	stepShell
 	stepDone
 )
@@ -49,23 +52,29 @@ type Model struct {
 	height    int
 	ready     bool
 
-	apiKey  string
-	baseURL string
-	model   string
-	shell   string
-	err     string
+	apiKey        string
+	baseURL       string
+	model         string
+	imageModel    string
+	voice         string
+	realtimeModel string
+	shell         string
+	err           string
 
 	availableModels []string
 	fetchingModels  bool
 	modelCursor     int
 	modelPickMode   bool
 
-	savedAPIKey    bool
-	savedBaseURL   bool
-	savedModel     bool
-	shellInstalled bool
-	shellSkipped   bool
-	shellError     string
+	savedAPIKey       bool
+	savedBaseURL      bool
+	savedModel        bool
+	savedImageModel   bool
+	savedVoice        bool
+	savedRealtimeModel bool
+	shellInstalled    bool
+	shellSkipped      bool
+	shellError        string
 }
 
 func NewModel() Model {
@@ -74,14 +83,15 @@ func NewModel() Model {
 	ti.CharLimit = 256
 	ti.Width = 60
 
-	shell := detectShell()
-
 	return Model{
-		step:      stepWelcome,
-		textInput: ti,
-		shell:     shell,
-		baseURL:   config.DefaultBaseURL,
-		model:     config.DefaultModel,
+		step:          stepWelcome,
+		textInput:     ti,
+		shell:         detectShell(),
+		baseURL:       config.DefaultBaseURL,
+		model:         config.DefaultModel,
+		imageModel:    config.DefaultImageModel,
+		voice:         config.DefaultT2SVoice,
+		realtimeModel: config.DefaultRealtimeSessionModel,
 	}
 }
 
@@ -114,7 +124,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		m.err = ""
 
-		// Pick mode: ↑/↓ navigation, Tab to switch to manual input
+		// Pick mode navigation for chat model step
 		if m.step == stepModel && m.modelPickMode {
 			switch msg.Type {
 			case tea.KeyCtrlC, tea.KeyEsc:
@@ -143,16 +153,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			return m, tea.Quit
-
 		case tea.KeyTab:
 			return m.handleSkip()
-
 		case tea.KeyEnter:
 			return m.handleEnter()
 		}
 	}
 
-	if m.step >= stepAPIKey && m.step <= stepModel && !m.modelPickMode {
+	if m.step >= stepAPIKey && m.step <= stepRealtimeModel && !m.modelPickMode {
 		var cmd tea.Cmd
 		m.textInput, cmd = m.textInput.Update(msg)
 		return m, cmd
@@ -222,6 +230,42 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			m.model = val
 			m.savedModel = true
 		}
+		return m.enterStep(stepImageModel, m.imageModel, config.DefaultImageModel)
+
+	case stepImageModel:
+		val := strings.TrimSpace(m.textInput.Value())
+		if val != "" && val != config.DefaultImageModel {
+			if err := config.SaveImageModel(val); err != nil {
+				m.err = fmt.Sprintf("Failed to save: %v", err)
+				return m, nil
+			}
+			m.imageModel = val
+			m.savedImageModel = true
+		}
+		return m.enterStep(stepVoice, m.voice, config.DefaultT2SVoice)
+
+	case stepVoice:
+		val := strings.TrimSpace(m.textInput.Value())
+		if val != "" && val != config.DefaultT2SVoice {
+			if err := config.SaveT2SVoice(val); err != nil {
+				m.err = fmt.Sprintf("Failed to save: %v", err)
+				return m, nil
+			}
+			m.voice = val
+			m.savedVoice = true
+		}
+		return m.enterStep(stepRealtimeModel, m.realtimeModel, config.DefaultRealtimeSessionModel)
+
+	case stepRealtimeModel:
+		val := strings.TrimSpace(m.textInput.Value())
+		if val != "" && val != config.DefaultRealtimeSessionModel {
+			if err := config.SaveRealtimeModel(val); err != nil {
+				m.err = fmt.Sprintf("Failed to save: %v", err)
+				return m, nil
+			}
+			m.realtimeModel = val
+			m.savedRealtimeModel = true
+		}
 		m.step = stepShell
 		return m, nil
 
@@ -240,6 +284,17 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	return m, nil
+}
+
+// enterStep transitions to a simple text-input step.
+func (m Model) enterStep(step int, current, placeholder string) (tea.Model, tea.Cmd) {
+	m.step = step
+	m.textInput.SetValue(current)
+	m.textInput.Placeholder = placeholder
+	m.textInput.EchoMode = textinput.EchoNormal
+	m.textInput.EchoCharacter = 0
+	m.textInput.Focus()
+	return m, textinput.Blink
 }
 
 func (m Model) handleSkip() (tea.Model, tea.Cmd) {
@@ -262,6 +317,15 @@ func (m Model) handleSkip() (tea.Model, tea.Cmd) {
 		return m, tea.Batch(textinput.Blink, fetchModelsCmd())
 
 	case stepModel:
+		return m.enterStep(stepImageModel, m.imageModel, config.DefaultImageModel)
+
+	case stepImageModel:
+		return m.enterStep(stepVoice, m.voice, config.DefaultT2SVoice)
+
+	case stepVoice:
+		return m.enterStep(stepRealtimeModel, m.realtimeModel, config.DefaultRealtimeSessionModel)
+
+	case stepRealtimeModel:
 		m.step = stepShell
 		return m, nil
 
@@ -288,6 +352,12 @@ func (m Model) View() string {
 		content = m.viewBaseURL()
 	case stepModel:
 		content = m.viewModel()
+	case stepImageModel:
+		content = m.viewImageModel()
+	case stepVoice:
+		content = m.viewVoice()
+	case stepRealtimeModel:
+		content = m.viewRealtimeModel()
 	case stepShell:
 		content = m.viewShell()
 	case stepDone:
@@ -326,49 +396,43 @@ func (m Model) viewWelcome() string {
 func (m Model) viewAPIKey() string {
 	var b strings.Builder
 
-	b.WriteString(m.stepHeader("Step 1/4", "API Key"))
+	b.WriteString(m.stepHeader("Step 1/7", "API Key"))
 	b.WriteString("\n\n")
-	b.WriteString("Enter your OpenAI API key.\n")
+	b.WriteString("Enter your API key.\n")
 	b.WriteString(dimStyle.Render("If you're using Ollama or another local provider, press Tab to skip."))
 	b.WriteString("\n\n")
 	b.WriteString(m.textInput.View())
 	b.WriteString("\n\n")
-
 	if m.err != "" {
 		b.WriteString(errorStyle.Render(m.err))
 		b.WriteString("\n\n")
 	}
-
 	b.WriteString(m.navHints("Enter: save", "Tab: skip", "Esc: quit"))
-
 	return b.String()
 }
 
 func (m Model) viewBaseURL() string {
 	var b strings.Builder
 
-	b.WriteString(m.stepHeader("Step 2/4", "API Base URL"))
+	b.WriteString(m.stepHeader("Step 2/7", "API Base URL"))
 	b.WriteString("\n\n")
 	b.WriteString("API endpoint URL.\n")
 	b.WriteString(dimStyle.Render("For Ollama use: http://localhost:11434/v1"))
 	b.WriteString("\n\n")
 	b.WriteString(m.textInput.View())
 	b.WriteString("\n\n")
-
 	if m.err != "" {
 		b.WriteString(errorStyle.Render(m.err))
 		b.WriteString("\n\n")
 	}
-
 	b.WriteString(m.navHints("Enter: save", "Tab: skip (keep default)", "Esc: quit"))
-
 	return b.String()
 }
 
 func (m Model) viewModel() string {
 	var b strings.Builder
 
-	b.WriteString(m.stepHeader("Step 3/4", "Model"))
+	b.WriteString(m.stepHeader("Step 3/7", "Chat Model"))
 	b.WriteString("\n\n")
 
 	if m.modelPickMode && len(m.availableModels) > 0 {
@@ -385,7 +449,6 @@ func (m Model) viewModel() string {
 			end = total
 			start = max(0, end-windowSize)
 		}
-
 		if start > 0 {
 			b.WriteString(dimStyle.Render(fmt.Sprintf("  (%d more above)\n", start)))
 		}
@@ -399,7 +462,6 @@ func (m Model) viewModel() string {
 		if end < total {
 			b.WriteString(dimStyle.Render(fmt.Sprintf("  (%d more below)\n", total-end)))
 		}
-
 		b.WriteString("\n")
 		if m.err != "" {
 			b.WriteString(errorStyle.Render(m.err))
@@ -413,18 +475,73 @@ func (m Model) viewModel() string {
 		b.WriteString(dimStyle.Render("Fetching available models..."))
 		b.WriteString("\n\n")
 	}
-
 	b.WriteString("Which model should GPTerminal use?\n")
 	b.WriteString(dimStyle.Render("Examples: gpt-4o, gpt-4o-mini, llama3, deepseek-r1"))
 	b.WriteString("\n\n")
 	b.WriteString(m.textInput.View())
 	b.WriteString("\n\n")
-
 	if m.err != "" {
 		b.WriteString(errorStyle.Render(m.err))
 		b.WriteString("\n\n")
 	}
+	b.WriteString(m.navHints("Enter: save", "Tab: skip (keep default)", "Esc: quit"))
+	return b.String()
+}
 
+func (m Model) viewImageModel() string {
+	var b strings.Builder
+
+	b.WriteString(m.stepHeader("Step 4/7", "Image Model"))
+	b.WriteString("\n\n")
+	b.WriteString("Image generation model.\n")
+	b.WriteString(dimStyle.Render("Examples: gpt-image-1, dall-e-3, dall-e-2"))
+	b.WriteString("\n\n")
+	b.WriteString(m.textInput.View())
+	b.WriteString("\n\n")
+	if m.err != "" {
+		b.WriteString(errorStyle.Render(m.err))
+		b.WriteString("\n\n")
+	}
+	b.WriteString(m.navHints("Enter: save", "Tab: skip (keep default)", "Esc: quit"))
+	return b.String()
+}
+
+func (m Model) viewVoice() string {
+	var b strings.Builder
+
+	b.WriteString(m.stepHeader("Step 5/7", "Text-to-Speech Voice"))
+	b.WriteString("\n\n")
+	b.WriteString("Voice for text-to-speech synthesis.\n")
+	b.WriteString(dimStyle.Render("OpenAI voices: alloy, ash, coral, echo, fable, marin, nova, onyx, sage, shimmer"))
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("Other providers may use different voice names."))
+	b.WriteString("\n\n")
+	b.WriteString(m.textInput.View())
+	b.WriteString("\n\n")
+	if m.err != "" {
+		b.WriteString(errorStyle.Render(m.err))
+		b.WriteString("\n\n")
+	}
+	b.WriteString(m.navHints("Enter: save", "Tab: skip (keep default)", "Esc: quit"))
+	return b.String()
+}
+
+func (m Model) viewRealtimeModel() string {
+	var b strings.Builder
+
+	b.WriteString(m.stepHeader("Step 6/7", "Realtime Transcription Model"))
+	b.WriteString("\n\n")
+	b.WriteString("Session model for live microphone transcription (--mic).\n")
+	b.WriteString(dimStyle.Render("Examples: gpt-realtime, gpt-4o-realtime-preview"))
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("The realtime WebSocket URL is derived from your API base URL automatically."))
+	b.WriteString("\n\n")
+	b.WriteString(m.textInput.View())
+	b.WriteString("\n\n")
+	if m.err != "" {
+		b.WriteString(errorStyle.Render(m.err))
+		b.WriteString("\n\n")
+	}
 	b.WriteString(m.navHints("Enter: save", "Tab: skip (keep default)", "Esc: quit"))
 	return b.String()
 }
@@ -432,7 +549,7 @@ func (m Model) viewModel() string {
 func (m Model) viewShell() string {
 	var b strings.Builder
 
-	b.WriteString(m.stepHeader("Step 4/4", "Shell Integration"))
+	b.WriteString(m.stepHeader("Step 7/7", "Shell Integration"))
 	b.WriteString("\n\n")
 	b.WriteString("Add this line to your shell config to enable aliases and shortcuts:\n\n")
 
@@ -442,7 +559,6 @@ func (m Model) viewShell() string {
 		if m.shell == "fish" {
 			evalCmd = "gpterminal init fish | source"
 		}
-
 		b.WriteString(fmt.Sprintf("  %s  %s\n\n", labelStyle.Render("Shell:"), m.shell))
 		b.WriteString(fmt.Sprintf("  %s  %s\n\n", labelStyle.Render("Add to"), rcFile+":"))
 		b.WriteString(fmt.Sprintf("  %s\n", codeStyle.Render(evalCmd)))
@@ -456,7 +572,6 @@ func (m Model) viewShell() string {
 
 	b.WriteString("\n")
 	b.WriteString(m.navHints("Enter: auto-install", "Tab: skip", "Esc: quit"))
-
 	return b.String()
 }
 
@@ -470,29 +585,41 @@ func (m Model) viewDone() string {
 	dash := dimStyle.Render(" --")
 
 	if m.savedAPIKey {
-		b.WriteString(fmt.Sprintf("  %s API Key     configured\n", check))
+		b.WriteString(fmt.Sprintf("  %s API Key          configured\n", check))
 	} else {
-		b.WriteString(fmt.Sprintf("  %s API Key     not set (use env OPENAI_API_KEY or gpterminal config set api_key)\n", dash))
+		b.WriteString(fmt.Sprintf("  %s API Key          not set (use env OPENAI_API_KEY or gpterminal config set-key)\n", dash))
 	}
-
 	if m.savedBaseURL {
-		b.WriteString(fmt.Sprintf("  %s Base URL    %s\n", check, m.baseURL))
+		b.WriteString(fmt.Sprintf("  %s Base URL         %s\n", check, m.baseURL))
 	} else {
-		b.WriteString(fmt.Sprintf("  %s Base URL    %s (default)\n", dash, m.baseURL))
+		b.WriteString(fmt.Sprintf("  %s Base URL         %s (default)\n", dash, m.baseURL))
 	}
-
 	if m.savedModel {
-		b.WriteString(fmt.Sprintf("  %s Model       %s\n", check, m.model))
+		b.WriteString(fmt.Sprintf("  %s Chat Model       %s\n", check, m.model))
 	} else {
-		b.WriteString(fmt.Sprintf("  %s Model       %s (default)\n", dash, m.model))
+		b.WriteString(fmt.Sprintf("  %s Chat Model       %s (default)\n", dash, m.model))
 	}
-
+	if m.savedImageModel {
+		b.WriteString(fmt.Sprintf("  %s Image Model      %s\n", check, m.imageModel))
+	} else {
+		b.WriteString(fmt.Sprintf("  %s Image Model      %s (default)\n", dash, m.imageModel))
+	}
+	if m.savedVoice {
+		b.WriteString(fmt.Sprintf("  %s T2S Voice        %s\n", check, m.voice))
+	} else {
+		b.WriteString(fmt.Sprintf("  %s T2S Voice        %s (default)\n", dash, m.voice))
+	}
+	if m.savedRealtimeModel {
+		b.WriteString(fmt.Sprintf("  %s Realtime Model   %s\n", check, m.realtimeModel))
+	} else {
+		b.WriteString(fmt.Sprintf("  %s Realtime Model   %s (default)\n", dash, m.realtimeModel))
+	}
 	if m.shellInstalled {
-		b.WriteString(fmt.Sprintf("  %s Shell      installed to %s\n", check, shellRCFile(m.shell)))
+		b.WriteString(fmt.Sprintf("  %s Shell            installed to %s\n", check, shellRCFile(m.shell)))
 	} else if m.shellError != "" {
-		b.WriteString(fmt.Sprintf("  %s Shell      auto-install failed: %s\n", dash, m.shellError))
+		b.WriteString(fmt.Sprintf("  %s Shell            auto-install failed: %s\n", dash, m.shellError))
 	} else if m.shellSkipped {
-		b.WriteString(fmt.Sprintf("  %s Shell      skipped (add manually)\n", dash))
+		b.WriteString(fmt.Sprintf("  %s Shell            skipped (add manually)\n", dash))
 	}
 
 	b.WriteString("\n")
@@ -501,7 +628,7 @@ func (m Model) viewDone() string {
 	b.WriteString("Try it out:\n")
 	b.WriteString(fmt.Sprintf("  %s  Start a chat session\n", codeStyle.Render("gpterminal chat")))
 	b.WriteString(fmt.Sprintf("  %s  Fix your last command\n", codeStyle.Render("gpterminal fix")))
-	b.WriteString(fmt.Sprintf("  %s  Run a natural language command\n", codeStyle.Render("gpterminal run \"list large files\"")))
+	b.WriteString(fmt.Sprintf("  %s  Generate an image\n", codeStyle.Render("gpterminal imagine \"a sunset over mountains\"")))
 	b.WriteString("\n")
 	b.WriteString(hintStyle.Render("Press Enter to exit."))
 
@@ -521,7 +648,6 @@ func (m Model) navHints(hints ...string) string {
 }
 
 func detectShell() string {
-	// Check parent process name first — this is the shell actually running us.
 	ppid := os.Getppid()
 	if data, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", ppid)); err == nil {
 		name := strings.TrimSpace(string(data))
@@ -530,7 +656,6 @@ func detectShell() string {
 			return name
 		}
 	}
-	// Fall back to $SHELL (login shell).
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		return ""
@@ -544,7 +669,6 @@ func (m Model) autoInstallShell() error {
 		return fmt.Errorf("unsupported shell: %s", m.shell)
 	}
 
-	// Expand ~ to $HOME
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("resolve home dir: %w", err)
@@ -558,16 +682,14 @@ func (m Model) autoInstallShell() error {
 		evalLine = "gpterminal init fish | source"
 	}
 
-	// Read existing contents and check if already present.
 	data, err := os.ReadFile(rcFile)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read %s: %w", rcFile, err)
 	}
 	if strings.Contains(string(data), evalLine) {
-		return nil // already installed
+		return nil
 	}
 
-	// Ensure parent directory exists (for fish).
 	if dir := filepath.Dir(rcFile); dir != "" {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("create dir %s: %w", dir, err)
@@ -580,11 +702,9 @@ func (m Model) autoInstallShell() error {
 	}
 	defer f.Close()
 
-	// Add newline before if file exists and doesn't end with newline.
 	if len(data) > 0 && data[len(data)-1] != '\n' {
 		f.WriteString("\n")
 	}
-
 	_, err = f.WriteString(evalLine + "\n")
 	return err
 }

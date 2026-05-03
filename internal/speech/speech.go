@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/cycl0o0/GPTerminal/internal/ai"
+	"github.com/cycl0o0/GPTerminal/internal/config"
 	openai "github.com/sashabaranov/go-openai"
 )
 
@@ -101,7 +102,7 @@ func Transcribe(ctx context.Context, filePath string, opts TranscriptionOptions)
 		return nil, err
 	}
 
-	client, err := ai.NewClient()
+	client, err := ai.NewClientWithBaseURL(config.S2TBaseURL())
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +150,7 @@ func Synthesize(ctx context.Context, input string, opts SynthesisOptions) (*Synt
 		return nil, fmt.Errorf("input text cannot be empty")
 	}
 
-	client, err := ai.NewClient()
+	client, err := ai.NewClientWithBaseURL(config.T2SBaseURL())
 	if err != nil {
 		return nil, err
 	}

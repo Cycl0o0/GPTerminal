@@ -90,19 +90,36 @@ var showConfigCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		key := config.APIKey()
 		if key != "" {
-			// Mask the key for security
 			masked := key[:4] + "..." + key[len(key)-4:]
-			fmt.Printf("API Key: %s\n", masked)
+			fmt.Printf("API Key:            %s\n", masked)
 		} else {
-			fmt.Println("API Key: (not set)")
+			fmt.Println("API Key:            (not set)")
 		}
-		fmt.Printf("Base URL: %s\n", config.APIBaseURL())
-		fmt.Printf("Model: %s\n", config.Model())
-		fmt.Printf("Temperature: %.1f\n", config.Temperature())
-		fmt.Printf("Max Tokens: %d\n", config.MaxTokens())
-		fmt.Printf("Config file: %s\n", config.ConfigFile())
+		fmt.Printf("Base URL:           %s\n", config.APIBaseURL())
+		fmt.Printf("Model:              %s\n", config.Model())
+		fmt.Printf("Temperature:        %.1f\n", config.Temperature())
+		fmt.Printf("Max Tokens:         %d\n", config.MaxTokens())
+		fmt.Println()
+		fmt.Printf("Image Model:        %s\n", config.ImageModel())
+		fmt.Printf("Image Size:         %s\n", config.ImageSize())
+		if u := config.ImageBaseURL(); u != config.APIBaseURL() {
+			fmt.Printf("Image Base URL:     %s\n", u)
+		}
+		fmt.Println()
+		fmt.Printf("S2T Model:          %s\n", config.S2TModel())
+		if u := config.S2TBaseURL(); u != config.APIBaseURL() {
+			fmt.Printf("S2T Base URL:       %s\n", u)
+		}
+		fmt.Printf("T2S Model:          %s\n", config.T2SModel())
+		fmt.Printf("T2S Voice:          %s\n", config.T2SVoice())
+		if u := config.T2SBaseURL(); u != config.APIBaseURL() {
+			fmt.Printf("T2S Base URL:       %s\n", u)
+		}
+		fmt.Printf("Realtime Model:     %s\n", config.RealtimeModel())
+		fmt.Printf("Realtime URL:       %s\n", config.RealtimeURL())
+		fmt.Println()
+		fmt.Printf("Config file:        %s\n", config.ConfigFile())
 
-		// Print validation warnings
 		if warnings := config.Validate(); len(warnings) > 0 {
 			fmt.Fprintln(os.Stderr)
 			for _, w := range warnings {
@@ -205,6 +222,60 @@ var setModelCmd = &cobra.Command{
 	},
 }
 
+// ── per-service model commands ─────────────────────────────────────────────
+
+func makeSetModelCmd(use, short, key string, saveFn func(string) error) *cobra.Command {
+	return &cobra.Command{
+		Use:   use,
+		Short: short,
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := saveFn(args[0]); err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Saved: %s = %s\n", key, args[0])
+		},
+	}
+}
+
+func makeSetURLCmd(use, short, key string, saveFn func(string) error) *cobra.Command {
+	return &cobra.Command{
+		Use:   use,
+		Short: short,
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			rawURL := args[0]
+			u, err := url.ParseRequestURI(rawURL)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %q is not a valid URL: %v\n", rawURL, err)
+				os.Exit(1)
+			}
+			if u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "ws" && u.Scheme != "wss" {
+				fmt.Fprintf(os.Stderr, "Error: %q must use http, https, ws, or wss scheme\n", rawURL)
+				os.Exit(1)
+			}
+			if err := saveFn(rawURL); err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Saved: %s = %s\n", key, rawURL)
+		},
+	}
+}
+
+var (
+	setS2TModelCmd    = makeSetModelCmd("set-s2t-model <model>", "Set speech-to-text model", "s2t_model", config.SaveS2TModel)
+	setT2SModelCmd    = makeSetModelCmd("set-t2s-model <model>", "Set text-to-speech model", "t2s_model", config.SaveT2SModel)
+	setT2SVoiceCmd    = makeSetModelCmd("set-t2s-voice <voice>", "Set text-to-speech voice", "t2s_voice", config.SaveT2SVoice)
+	setImageModelCmd  = makeSetModelCmd("set-image-model <model>", "Set image generation model", "image_model", config.SaveImageModel)
+	setRealtimeModelCmd = makeSetModelCmd("set-realtime-model <model>", "Set realtime transcription session model", "realtime_model", config.SaveRealtimeModel)
+	setS2TURLCmd      = makeSetURLCmd("set-s2t-url <url>", "Set speech-to-text base URL", "s2t_base_url", config.SaveS2TBaseURL)
+	setT2SURLCmd      = makeSetURLCmd("set-t2s-url <url>", "Set text-to-speech base URL", "t2s_base_url", config.SaveT2SBaseURL)
+	setImageURLCmd    = makeSetURLCmd("set-image-url <url>", "Set image generation base URL", "image_base_url", config.SaveImageBaseURL)
+	setRealtimeURLCmd = makeSetURLCmd("set-realtime-url <url>", "Set realtime WebSocket URL (wss://...)", "realtime_url", config.SaveRealtimeURL)
+)
+
 func sortedKeys(m map[string]float64) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -225,5 +296,16 @@ func init() {
 	configCmd.AddCommand(usageCmd)
 	configCmd.AddCommand(modelsCmd)
 	configCmd.AddCommand(setModelCmd)
+	// per-service model commands
+	configCmd.AddCommand(setS2TModelCmd)
+	configCmd.AddCommand(setT2SModelCmd)
+	configCmd.AddCommand(setT2SVoiceCmd)
+	configCmd.AddCommand(setImageModelCmd)
+	configCmd.AddCommand(setRealtimeModelCmd)
+	// per-service URL commands
+	configCmd.AddCommand(setS2TURLCmd)
+	configCmd.AddCommand(setT2SURLCmd)
+	configCmd.AddCommand(setImageURLCmd)
+	configCmd.AddCommand(setRealtimeURLCmd)
 	rootCmd.AddCommand(configCmd)
 }

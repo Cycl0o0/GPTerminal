@@ -21,7 +21,6 @@ import (
 
 const (
 	DefaultRealtimeSessionModel = "gpt-realtime"
-	realtimeAPIURL              = "wss://api.openai.com/v1/realtime"
 	realtimeOrigin              = "http://localhost"
 	audioChunkBytes             = 4800
 	minCommitAudioBytes         = audioChunkBytes
@@ -87,7 +86,7 @@ type transcriptWriter struct {
 func TranscribeMicrophoneRealtime(ctx context.Context, opts RealtimeTranscriptionOptions) (*RealtimeTranscriptionResult, error) {
 	key := config.APIKey()
 	if key == "" {
-		return nil, fmt.Errorf("OpenAI API key not set. Run: gpterminal config set-key <key>\nOr set OPENAI_API_KEY environment variable")
+		return nil, fmt.Errorf("API key not set. Run: gpterminal config set-key <key>\nOr set OPENAI_API_KEY environment variable")
 	}
 
 	transcriptionModel := strings.TrimSpace(opts.TranscriptionModel)
@@ -95,7 +94,8 @@ func TranscribeMicrophoneRealtime(ctx context.Context, opts RealtimeTranscriptio
 		transcriptionModel = DefaultTranscriptionModel
 	}
 
-	ws, err := dialRealtimeWebSocket(ctx, key)
+	realtimeURL := config.RealtimeURL()
+	ws, err := dialRealtimeWebSocket(ctx, key, realtimeURL)
 	if err != nil {
 		return nil, err
 	}
@@ -137,11 +137,11 @@ func TranscribeMicrophoneRealtime(ctx context.Context, opts RealtimeTranscriptio
 	}, nil
 }
 
-func dialRealtimeWebSocket(ctx context.Context, apiKey string) (*websocket.Conn, error) {
+func dialRealtimeWebSocket(ctx context.Context, apiKey, realtimeURL string) (*websocket.Conn, error) {
 	values := url.Values{}
 	values.Set("intent", "transcription")
 
-	u := realtimeAPIURL + "?" + values.Encode()
+	u := realtimeURL + "?" + values.Encode()
 	cfg, err := websocket.NewConfig(u, realtimeOrigin)
 	if err != nil {
 		return nil, fmt.Errorf("build realtime websocket config: %w", err)

@@ -56,6 +56,9 @@ DISCLAIMER: You are solely responsible for the use of this transcription feature
 			os.Exit(1)
 		}
 
+		if !cmd.Flags().Changed("session-model") {
+			s2tRealtimeModel = config.RealtimeModel()
+		}
 		if s2tMic {
 			if s2tTranslate {
 				fmt.Fprintln(os.Stderr, "Error: --translate is not supported with --mic realtime transcription")

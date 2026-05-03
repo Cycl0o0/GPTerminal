@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/cycl0o0/GPTerminal/internal/ai"
+	"github.com/cycl0o0/GPTerminal/internal/config"
 )
 
 // Result holds output from an image generation request.
@@ -18,7 +19,7 @@ type Result struct {
 
 // Generate creates images via the OpenAI images API and saves them to disk.
 func Generate(ctx context.Context, prompt, model, size, outputDir string, n int) ([]Result, error) {
-	client, err := ai.NewClient()
+	client, err := ai.NewClientWithBaseURL(config.ImageBaseURL())
 	if err != nil {
 		return nil, err
 	}

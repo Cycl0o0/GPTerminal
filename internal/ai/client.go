@@ -19,14 +19,17 @@ type Client struct {
 }
 
 func NewClient() (*Client, error) {
+	return NewClientWithBaseURL(config.APIBaseURL())
+}
+
+// NewClientWithBaseURL creates a client using the given base URL and the
+// globally configured API key. When using a custom base URL (e.g. Ollama),
+// the API key is optional.
+func NewClientWithBaseURL(baseURL string) (*Client, error) {
 	key := config.APIKey()
-	baseURL := config.APIBaseURL()
-
-	// When using a custom base URL (e.g. Ollama), the API key is optional
 	if key == "" && baseURL == config.DefaultBaseURL {
-		return nil, fmt.Errorf("OpenAI API key not set. Run: gpterminal config set-key <key>\nOr set OPENAI_API_KEY environment variable")
+		return nil, fmt.Errorf("API key not set. Run: gpterminal config set-key <key>\nOr set OPENAI_API_KEY environment variable")
 	}
-
 	cfg := openai.DefaultConfig(key)
 	cfg.BaseURL = baseURL
 	return &Client{client: openai.NewClientWithConfig(cfg)}, nil
