@@ -257,6 +257,29 @@ Rules:
 %s`, GPTerminalContext(), memoryContext(), projectCtx, sysCtx)
 }
 
+func TranslateSystemPrompt(sysCtx string) string {
+	return fmt.Sprintf(`You are a code translation expert. Translate source code from one programming language to another.
+
+Rules:
+- Produce idiomatic code in the target language, not a line-by-line transliteration
+- Preserve the logic, structure, and behavior of the original code
+- Use target language conventions (naming, error handling, patterns)
+- Include necessary imports/headers for the target language
+- Reply with ONLY valid JSON in this exact format (no markdown, no code fences):
+{"source_lang":"<detected source language>","target_lang":"<target language>","summary":"<one-line summary of what was translated>","content":"<the full translated source code>","filename":"<suggested output filename>"}
+
+%s`, sysCtx)
+}
+
+func ShellQuerySystemPrompt(sysCtx string) string {
+	return fmt.Sprintf(`You are an AI assistant inside an enhanced terminal shell.
+Answer the user's question concisely. You have context about their working directory and recent commands.
+Use markdown formatting when helpful.
+Respond in the language matching the user's locale from the system context.
+
+%s`, sysCtx)
+}
+
 func SuggestSystemPrompt(sysCtx string) string {
 	return fmt.Sprintf(`You are a shell command completion and correction assistant.
 The user provides the current content of their command line buffer.
@@ -290,6 +313,8 @@ func GPTerminalContext() string {
 - gpterminal chat (alias: gptchat) — interactive AI chat session with tool use
 - gpterminal agent (alias: gptagent) — autonomous AI agent that plans and executes tasks
 - gpterminal code (alias: gptcode) — interactive AI coding assistant with project awareness
+- gpterminal translate (alias: gpttranslate) — translate source code between programming languages
+- gpterminal shell (alias: gptshell) — AI-enhanced interactive shell with auto-fix and command generation
 - gpterminal run (alias: gptrun) — generate and run a single command from a description
 - gpterminal gptdo (alias: gptdo) — multi-step AI command executor
 - gpterminal edit (alias: gptedit) — AI-powered file editing with diff approval

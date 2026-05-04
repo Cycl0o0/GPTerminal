@@ -55,6 +55,8 @@ alias gptstats='gpterminal stats'
 alias gptagent='gpterminal agent'
 alias gptsuggest='gpterminal suggest'
 alias gptcode='gpterminal code'
+alias gpttranslate='gpterminal translate'
+alias gptshell='gpterminal shell'
 
 # Inline AI suggestion via Ctrl+G
 _gpterminal_suggest() {
@@ -94,6 +96,8 @@ alias gptstats='gpterminal stats'
 alias gptagent='gpterminal agent'
 alias gptsuggest='gpterminal suggest'
 alias gptcode='gpterminal code'
+alias gpttranslate='gpterminal translate'
+alias gptshell='gpterminal shell'
 
 # Inline AI suggestion via Ctrl+G
 _gpterminal_suggest() {
@@ -174,6 +178,12 @@ end
 function gptcode --description 'GPTerminal: interactive coding assistant'
     gpterminal code $argv
 end
+function gpttranslate --description 'GPTerminal: translate code between languages'
+    gpterminal translate $argv
+end
+function gptshell --description 'GPTerminal: AI-enhanced shell'
+    gpterminal shell $argv
+end
 
 # Inline AI suggestion via Ctrl+G
 function _gpterminal_suggest
@@ -209,6 +219,8 @@ function gptstats { gpterminal stats $args }
 function gptagent { gpterminal agent $args }
 function gptsuggest { gpterminal suggest $args }
 function gptcode { gpterminal code $args }
+function gpttranslate { gpterminal translate $args }
+function gptshell { gpterminal shell $args }
 
 # Inline AI suggestion via Ctrl+G
 Set-PSReadLineKeyHandler -Chord 'Ctrl+g' -ScriptBlock {

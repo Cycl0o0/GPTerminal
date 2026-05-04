@@ -22,6 +22,8 @@ AI-powered terminal assistant that integrates OpenAI GPT, Anthropic Claude, Goog
 - **Inline Suggest** (`gpterminal suggest` / `Ctrl+G`) - AI-powered inline command completion and correction
 - **Agent Mode** (`gpterminal agent "<objective>"`) - Autonomous AI agent that plans and executes multi-step tasks
 - **GPTCode** (`gpterminal code`) - Interactive AI coding assistant with project-aware context, slash commands, and session persistence
+- **Translate** (`gpterminal translate <file> <lang>`) - Translate source code between programming languages with idiomatic output
+- **AI Shell** (`gpterminal shell`) - AI-enhanced interactive shell with auto-fix on errors, `?` for questions, `!` for command generation
 - **Stats Dashboard** (`gpterminal stats`) - Usage statistics with per-command tracking and optional TUI dashboard
 - **Auto-Update** (`gpterminal update`) - Check for and install updates from GitHub Releases
 - **Custom Templates** (`gpterminal template`) - Define custom AI commands via YAML template files
@@ -361,6 +363,32 @@ $ gpterminal resume myagent
 ```
 
 `gptagent` launches an autonomous AI agent that plans and executes multi-step tasks. The agent uses available tools (read_file, list_directory, search_text, run_command, write_file, edit_file) to accomplish objectives. Commands with risk score above 7/10 require manual approval. Use `--session` to save progress and resume later. When MCP servers are configured, their tools are also available to the agent.
+
+### Translate
+
+```bash
+$ gpterminal translate main.py go
+$ gpterminal translate server.js typescript
+$ gpterminal translate utils.go rust --output utils.rs
+```
+
+`gpttranslate` translates source code from one programming language to another. The AI auto-detects the source language, produces idiomatic code in the target language (not line-by-line transliteration), and suggests an output filename. You can override the output path with `--output`. Supports Go, Python, JavaScript, TypeScript, Rust, Ruby, Java, C, C++, C#, Swift, Kotlin, PHP, Lua, Scala, Bash, Zig, Elixir, Haskell, OCaml, R, Dart, and more.
+
+### AI Shell
+
+```bash
+$ gpterminal shell
+```
+
+`gptshell` launches an AI-enhanced interactive shell that wraps your real shell. It shows a git-aware prompt and adds AI superpowers:
+
+| Prefix | Action |
+|--------|--------|
+| `?`    | Ask AI a question (e.g., `? how do I find large files`) |
+| `!`    | Generate a command from natural language (e.g., `! list docker containers by size`) |
+| *(none)* | Run normally — failed commands trigger automatic AI fix suggestions |
+
+Generated commands show a risk score before execution and support yes/no/edit responses. The shell tracks recent command history to give the AI context for better suggestions.
 
 ### GPTCode
 
