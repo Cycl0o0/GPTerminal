@@ -19,6 +19,7 @@ import (
 	"github.com/cycl0o0/GPTerminal/internal/fileutil"
 	"github.com/cycl0o0/GPTerminal/internal/hooks"
 	"github.com/cycl0o0/GPTerminal/internal/mcp"
+	"github.com/cycl0o0/GPTerminal/internal/memory"
 	"github.com/cycl0o0/GPTerminal/internal/risk"
 	"github.com/cycl0o0/GPTerminal/internal/system"
 	openai "github.com/sashabaranov/go-openai"
@@ -168,34 +169,29 @@ func (r *Runner) streamAssistant(ctx context.Context, history []openai.ChatCompl
 	var usageData *openai.Usage
 
 	for {
-		resp, err := stream.Recv()
+		evt, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
 			return openai.ChatCompletionMessage{}, fmt.Errorf("stream recv error: %w", err)
 		}
-		if resp.Usage != nil {
-			usageData = resp.Usage
+		if evt.Usage != nil {
+			usageData = evt.Usage
 		}
-		if len(resp.Choices) == 0 {
-			continue
-		}
-
-		delta := resp.Choices[0].Delta
-		if delta.ReasoningContent != "" {
-			reasoning.WriteString(delta.ReasoningContent)
+		if evt.ReasoningContent != "" {
+			reasoning.WriteString(evt.ReasoningContent)
 			if opts.OnThinking != nil {
 				opts.OnThinking(strings.TrimSpace(reasoning.String()))
 			}
 		}
-		if delta.Content != "" {
-			content.WriteString(delta.Content)
+		if evt.Content != "" {
+			content.WriteString(evt.Content)
 			if opts.OnContent != nil {
-				opts.OnContent(delta.Content)
+				opts.OnContent(evt.Content)
 			}
 		}
-		mergeToolCalls(toolCalls, delta.ToolCalls)
+		mergeToolCalls(toolCalls, evt.ToolCalls)
 	}
 
 	r.client.RecordUsage(config.Model(), usageData)
@@ -353,6 +349,44 @@ func chatTools(allowWrite bool) []openai.Tool {
 		},
 	})
 
+	tools = append(tools, openai.Tool{
+		Type: openai.ToolTypeFunction,
+		Function: &openai.FunctionDefinition{
+			Name:        "save_memory",
+			Description: "Save a fact or preference to persistent memory so it can be recalled in future conversations. Use this to remember the user's project context, preferences, tech stack, or any important detail they mention.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"key": map[string]any{
+						"type":        "string",
+						"description": "A short descriptive label for this memory (e.g. \"preferred_language\", \"project_goal\", \"user_name\").",
+					},
+					"value": map[string]any{
+						"type":        "string",
+						"description": "The fact or detail to remember.",
+					},
+				},
+				"required": []string{"key", "value"},
+			},
+		},
+	}, openai.Tool{
+		Type: openai.ToolTypeFunction,
+		Function: &openai.FunctionDefinition{
+			Name:        "delete_memory",
+			Description: "Delete a previously saved memory by key.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"key": map[string]any{
+						"type":        "string",
+						"description": "The key of the memory to delete.",
+					},
+				},
+				"required": []string{"key"},
+			},
+		},
+	})
+
 	runDescription := "Run a safe, read-only terminal command for inspection from the current working directory. No shell operators are allowed. Prefer simple commands like git status, git diff, rg, ls, find, cat, pwd, uname, ps, and whoami."
 	if allowWrite {
 		runDescription = "Run a terminal command inside the current working directory. No shell operators are allowed. Read-only commands run directly. Commands that modify files or run project tasks require user approval before execution."
@@ -402,7 +436,7 @@ func chatTools(allowWrite bool) []openai.Tool {
 			Type: openai.ToolTypeFunction,
 			Function: &openai.FunctionDefinition{
 				Name:        "write_file",
-				Description: "Write or overwrite a text file inside the current working directory. The user will see a diff and must approve the write before it is applied.",
+				Description: "Write or overwrite a text file inside the current working directory. The user will see a diff and must approve the write before it is applied. Prefer edit_file for targeted changes to existing files.",
 				Parameters: map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -416,6 +450,40 @@ func chatTools(allowWrite bool) []openai.Tool {
 						},
 					},
 					"required": []string{"path", "content"},
+				},
+			},
+		}, openai.Tool{
+			Type: openai.ToolTypeFunction,
+			Function: &openai.FunctionDefinition{
+				Name:        "edit_file",
+				Description: "Apply targeted edits to an existing file using search-and-replace operations. Each operation finds an exact match of old_text and replaces it with new_text. Safer and more efficient than write_file for modifying existing files.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"path": map[string]any{
+							"type":        "string",
+							"description": "File path relative to the current working directory.",
+						},
+						"edits": map[string]any{
+							"type":        "array",
+							"description": "List of search-and-replace operations to apply in order.",
+							"items": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"old_text": map[string]any{
+										"type":        "string",
+										"description": "Exact text to find in the file. Must match uniquely.",
+									},
+									"new_text": map[string]any{
+										"type":        "string",
+										"description": "Replacement text.",
+									},
+								},
+								"required": []string{"old_text", "new_text"},
+							},
+						},
+					},
+					"required": []string{"path", "edits"},
 				},
 			},
 		})
@@ -506,6 +574,57 @@ func (r *Runner) executeToolCall(ctx context.Context, call openai.ToolCall, opts
 			return "Error: " + err.Error()
 		}
 		return out
+
+	case "edit_file":
+		var args struct {
+			Path  string   `json:"path"`
+			Edits []editOp `json:"edits"`
+		}
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+			return "Error: invalid tool arguments: " + err.Error()
+		}
+		out, err := r.editFile(args.Path, args.Edits, opts)
+		if err != nil {
+			return "Error: " + err.Error()
+		}
+		return out
+
+	case "save_memory":
+		var args struct {
+			Key   string `json:"key"`
+			Value string `json:"value"`
+		}
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+			return "Error: invalid tool arguments: " + err.Error()
+		}
+		store, err := memory.Load()
+		if err != nil {
+			return "Error: " + err.Error()
+		}
+		store.Set(args.Key, args.Value)
+		if err := store.Save(); err != nil {
+			return "Error: " + err.Error()
+		}
+		return fmt.Sprintf("Saved memory: %s = %s", args.Key, args.Value)
+
+	case "delete_memory":
+		var args struct {
+			Key string `json:"key"`
+		}
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+			return "Error: invalid tool arguments: " + err.Error()
+		}
+		store, err := memory.Load()
+		if err != nil {
+			return "Error: " + err.Error()
+		}
+		if store.Delete(args.Key) {
+			if err := store.Save(); err != nil {
+				return "Error: " + err.Error()
+			}
+			return fmt.Sprintf("Deleted memory: %s", args.Key)
+		}
+		return fmt.Sprintf("Memory not found: %s", args.Key)
 
 	case "web_search":
 		var args struct {
@@ -813,6 +932,68 @@ func (r *Runner) writeFile(path, content string, opts StreamOptions) (string, er
 	}
 
 	return truncateText(fmt.Sprintf("Wrote file: %s\nDiff:\n%s", resolved, diff), maxToolOutputChars), nil
+}
+
+type editOp struct {
+	OldText string `json:"old_text"`
+	NewText string `json:"new_text"`
+}
+
+func (r *Runner) editFile(path string, edits []editOp, opts StreamOptions) (string, error) {
+	if !opts.AllowWriteTools {
+		return "", fmt.Errorf("edit_file is not available in read-only chat mode")
+	}
+	if opts.ApproveFileWrite == nil {
+		return "", fmt.Errorf("edit_file requires an approval-capable chat session")
+	}
+	if len(edits) == 0 {
+		return "", fmt.Errorf("no edits provided")
+	}
+
+	resolved, err := r.resolveWorkspacePath(path)
+	if err != nil {
+		return "", err
+	}
+
+	existing, err := fileutil.ReadText(resolved)
+	if err != nil {
+		return "", fmt.Errorf("read file: %w", err)
+	}
+
+	modified := existing
+	for i, edit := range edits {
+		count := strings.Count(modified, edit.OldText)
+		if count == 0 {
+			return "", fmt.Errorf("edit %d: old_text not found in file", i+1)
+		}
+		if count > 1 {
+			return "", fmt.Errorf("edit %d: old_text matches %d locations (must be unique)", i+1, count)
+		}
+		modified = strings.Replace(modified, edit.OldText, edit.NewText, 1)
+	}
+
+	if modified == existing {
+		return "No changes required.", nil
+	}
+
+	diff := diffutil.Unified(r.relativePath(resolved), existing, modified)
+	decision, err := opts.ApproveFileWrite(FileWriteApprovalRequest{
+		Path:     r.relativePath(resolved),
+		Diff:     diff,
+		Existing: true,
+	})
+	if err != nil {
+		return "", err
+	}
+	if !decision.Approved {
+		return "Edit rejected by user.", nil
+	}
+
+	if err := fileutil.WriteText(resolved, modified); err != nil {
+		return "", err
+	}
+
+	return truncateText(fmt.Sprintf("Edited file: %s (%d edit(s) applied)\nDiff:\n%s", r.relativePath(resolved), len(edits), diff), maxToolOutputChars), nil
 }
 
 type langConfig struct {

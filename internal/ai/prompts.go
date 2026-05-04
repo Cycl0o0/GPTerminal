@@ -1,6 +1,10 @@
 package ai
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/cycl0o0/GPTerminal/internal/memory"
+)
 
 func FixSystemPrompt(sysCtx string) string {
 	return fmt.Sprintf(`You are a command-line expert. The user ran a command that failed.
@@ -177,7 +181,7 @@ Respond in the language matching the user's locale from the system context.
 
 func AgentSystemPrompt(sysCtx string) string {
 	return fmt.Sprintf(`You are GPTerminal Agent, an autonomous AI agent running inside a Linux terminal.
-You have access to local tools: read_file, list_directory, search_text, run_command, and write_file. You also have web tools: web_search and fetch_url.
+You have access to local tools: read_file, list_directory, search_text, run_command, write_file, and edit_file. You also have web tools: web_search and fetch_url. You can persist facts across sessions with save_memory and delete_memory.
 
 Your job is to accomplish the user's objective by planning and executing steps autonomously.
 
@@ -195,24 +199,31 @@ Rules:
 - Be thorough but efficient
 - When you are completely done, you MUST include the exact marker [AGENT_DONE] followed by a summary of what was accomplished
 - Never claim to be done unless all steps are truly complete
+- Prefer edit_file over write_file when making targeted changes to existing files
 
 %s
 
-%s`, GPTerminalContext(), sysCtx)
+%s
+
+%s`, GPTerminalContext(), memoryContext(), sysCtx)
 }
 
 func ChatSystemPrompt(sysCtx string) string {
 	return fmt.Sprintf(`You are GPTerminal, an AI assistant running inside a Linux terminal.
 You help with shell commands, system administration, programming, and general questions.
 You are aware of the user's system context and can give tailored advice.
-You may use available tools to inspect files, search text, list directories, run commands inside the current working directory, propose file writes, search the web, and fetch web pages when that would improve your answer.
+You may use available tools to inspect files, search text, list directories, run commands inside the current working directory, propose file writes and edits, search the web, and fetch web pages when that would improve your answer.
+You can persist facts across sessions with save_memory and delete_memory tools. Use save_memory proactively when you learn important details about the user or project.
 Read-only inspection tools can be used directly. Any command that modifies files or runs project tasks, and any file write, must be approved by the user first.
+Prefer edit_file over write_file when making targeted changes to existing files.
 Use markdown formatting in your responses when helpful.
 Respond in the language matching the user's locale from the system context.
 
 %s
 
-%s`, GPTerminalContext(), sysCtx)
+%s
+
+%s`, GPTerminalContext(), memoryContext(), sysCtx)
 }
 
 func SuggestSystemPrompt(sysCtx string) string {
@@ -230,6 +241,14 @@ Rules:
 - Use the system context to pick the right tools for the OS
 
 %s`, sysCtx)
+}
+
+func memoryContext() string {
+	store, err := memory.Load()
+	if err != nil || len(store.Entries) == 0 {
+		return ""
+	}
+	return store.ContextBlock()
 }
 
 func GPTerminalContext() string {
@@ -253,5 +272,6 @@ func GPTerminalContext() string {
 - gpterminal stats (alias: gptstats) — show usage statistics
 - gpterminal sessions (alias: gptsessions) — manage saved chat sessions
 - gpterminal resume (alias: gptresume) — resume a saved chat session
-- gpterminal init <shell> — print shell config for aliases and keybindings`
+- gpterminal init <shell> — print shell config for aliases and keybindings
+- gpterminal memory — manage persistent memory (list, set, delete, clear, search)`
 }

@@ -1,6 +1,6 @@
 # GPTerminal
 
-AI-powered terminal assistant that integrates OpenAI GPT or other OpenAI API-compatible models (like Ollama) into your Linux, macOS, and Windows terminal.
+AI-powered terminal assistant that integrates OpenAI GPT, Anthropic Claude, Google Gemini, or other OpenAI API-compatible models (like Ollama) into your Linux, macOS, and Windows terminal.
 
 ## Features
 
@@ -26,6 +26,9 @@ AI-powered terminal assistant that integrates OpenAI GPT or other OpenAI API-com
 - **Custom Templates** (`gpterminal template`) - Define custom AI commands via YAML template files
 - **Web Search & Fetch** - Chat and agent can search the web (DuckDuckGo) and fetch URL content as tools
 - **MCP Support** - Connect Model Context Protocol servers to extend available tools in chat and agent, with automatic reconnect on server crash
+- **Multi-Provider** - Native support for OpenAI, Anthropic Claude, and Google Gemini with provider-specific features (extended thinking, native tool use)
+- **Conversation Memory** (`gpterminal memory`) - Persistent memory across chat sessions so the AI remembers your project, preferences, and context
+- **Patch-Based Editing** - `edit_file` tool for targeted search-and-replace file edits with diff preview and approval (safer than full rewrites)
 - **Command Hooks** - Run custom shell commands before/after command execution via config
 - **Enhanced Pipe Mode** - All commands support stdin piping and disable colors when stdout is not a TTY
 - **System-Aware** - Detects OS, kernel, shell, CPU, memory, GPU for context-aware responses
@@ -82,10 +85,28 @@ sudo make install
 
 ### Setup
 
-1. Set your OpenAI API key:
+1. Choose your AI provider and set an API key:
 
 ```bash
-gpterminal config set-key YOUR_API_KEY
+# OpenAI (default)
+gpterminal config set-provider openai
+gpterminal config set-key YOUR_OPENAI_API_KEY
+
+# Anthropic Claude
+gpterminal config set-provider anthropic
+gpterminal config set-anthropic-key YOUR_ANTHROPIC_API_KEY
+gpterminal config set-model claude-sonnet-4-20250514
+
+# Google Gemini
+gpterminal config set-provider gemini
+gpterminal config set-gemini-key YOUR_GEMINI_API_KEY
+gpterminal config set-model gemini-2.0-flash
+```
+
+Or run the interactive setup wizard:
+
+```bash
+gpterminal setup
 ```
 
 2. Add shell integration to your rc file:
@@ -338,7 +359,19 @@ $ gpterminal agent "refactor the logging module" --max-steps 30
 $ gpterminal resume myagent
 ```
 
-`gptagent` launches an autonomous AI agent that plans and executes multi-step tasks. The agent uses available tools (read_file, list_directory, search_text, run_command, write_file) to accomplish objectives. Commands with risk score above 7/10 require manual approval. Use `--session` to save progress and resume later. When MCP servers are configured, their tools are also available to the agent.
+`gptagent` launches an autonomous AI agent that plans and executes multi-step tasks. The agent uses available tools (read_file, list_directory, search_text, run_command, write_file, edit_file) to accomplish objectives. Commands with risk score above 7/10 require manual approval. Use `--session` to save progress and resume later. When MCP servers are configured, their tools are also available to the agent.
+
+### Conversation Memory
+
+```bash
+$ gpterminal memory list              # List all saved memories
+$ gpterminal memory set lang Go       # Save a memory
+$ gpterminal memory delete lang       # Delete a memory
+$ gpterminal memory search project    # Search memories
+$ gpterminal memory clear             # Clear all memories
+```
+
+The AI can also save and delete memories automatically during chat and agent sessions using the `save_memory` and `delete_memory` tools. Saved memories are injected into future conversations so the AI remembers your project context, preferences, and key details across sessions.
 
 ### Stats Dashboard
 
@@ -460,9 +493,12 @@ $ gpterminal config usage --weekly  # per-week breakdown
 ### Configuration
 
 ```bash
-gpterminal config set-key <key>          # Save API key
-gpterminal config set-base-url <url>     # Save API base URL (e.g. Ollama)
-gpterminal config show                   # Show current config (with validation warnings)
+gpterminal config set-provider <provider>    # Set provider (openai, anthropic, gemini)
+gpterminal config set-key <key>              # Save OpenAI API key
+gpterminal config set-anthropic-key <key>    # Save Anthropic API key
+gpterminal config set-gemini-key <key>       # Save Gemini API key
+gpterminal config set-base-url <url>         # Save API base URL (e.g. Ollama)
+gpterminal config show                       # Show current config (with validation warnings)
 ```
 
 Config is stored at `~/.config/gpterminal/config.yaml`.
@@ -471,7 +507,10 @@ Config is stored at `~/.config/gpterminal/config.yaml`.
 
 | Key | Default | Env Variable | Description |
 |-----|---------|-------------|-------------|
+| `provider` | `openai` | `GPTERMINAL_PROVIDER` | AI provider: `openai`, `anthropic`, or `gemini` |
 | `api_key` | - | `OPENAI_API_KEY` | OpenAI API key |
+| `anthropic_api_key` | - | `ANTHROPIC_API_KEY` | Anthropic API key |
+| `gemini_api_key` | - | `GEMINI_API_KEY` | Google Gemini API key |
 | `api_base_url` | `https://api.openai.com/v1` | `OPENAI_API_BASE_URL` | API base URL (Ollama, etc.) |
 | `model` | `gpt-4o-mini` | `OPENAI_MODEL` | Model to use |
 | `temperature` | `0.7` | - | Response creativity |

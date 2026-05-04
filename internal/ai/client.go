@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 
 	"github.com/cycl0o0/GPTerminal/internal/config"
@@ -15,24 +14,46 @@ import (
 )
 
 type Client struct {
-	client *openai.Client
+	provider    Provider
+	openaiProv  *OpenAIProvider
 }
 
 func NewClient() (*Client, error) {
 	return NewClientWithBaseURL(config.APIBaseURL())
 }
 
-// NewClientWithBaseURL creates a client using the given base URL and the
-// globally configured API key. When using a custom base URL (e.g. Ollama),
-// the API key is optional.
 func NewClientWithBaseURL(baseURL string) (*Client, error) {
-	key := config.APIKey()
-	if key == "" && baseURL == config.DefaultBaseURL {
-		return nil, fmt.Errorf("API key not set. Run: gpterminal config set-key <key>\nOr set OPENAI_API_KEY environment variable")
+	provider := config.ProviderName()
+
+	switch provider {
+	case "anthropic":
+		key := config.AnthropicAPIKey()
+		if key == "" {
+			return nil, fmt.Errorf("Anthropic API key not set. Run: gpterminal config set anthropic_api_key <key>\nOr set ANTHROPIC_API_KEY environment variable")
+		}
+		ap := NewAnthropicProvider(key)
+		return &Client{provider: ap}, nil
+
+	case "gemini":
+		key := config.GeminiAPIKey()
+		if key == "" {
+			return nil, fmt.Errorf("Gemini API key not set. Run: gpterminal config set gemini_api_key <key>\nOr set GEMINI_API_KEY environment variable")
+		}
+		gp := NewGeminiProvider(key)
+		return &Client{provider: gp}, nil
+
+	default:
+		key := config.APIKey()
+		if key == "" && baseURL == config.DefaultBaseURL {
+			return nil, fmt.Errorf("API key not set. Run: gpterminal config set-key <key>\nOr set OPENAI_API_KEY environment variable")
+		}
+		op := NewOpenAIProvider(key, baseURL)
+		return &Client{provider: op, openaiProv: op}, nil
 	}
-	cfg := openai.DefaultConfig(key)
-	cfg.BaseURL = baseURL
-	return &Client{client: openai.NewClientWithConfig(cfg)}, nil
+}
+
+func (c *Client) ProviderName() string {
+	return c.provider.Name()
 }
 
 func (c *Client) Complete(ctx context.Context, messages []openai.ChatCompletionMessage) (string, error) {
@@ -41,7 +62,7 @@ func (c *Client) Complete(ctx context.Context, messages []openai.ChatCompletionM
 	}
 
 	model := config.Model()
-	resp, err := c.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
+	resp, err := c.provider.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
 		Model:       model,
 		Messages:    messages,
 		Temperature: config.Temperature(),
@@ -65,7 +86,7 @@ func (c *Client) CreateChatCompletion(ctx context.Context, req openai.ChatComple
 		return openai.ChatCompletionResponse{}, err
 	}
 
-	resp, err := c.client.CreateChatCompletion(ctx, req)
+	resp, err := c.provider.CreateChatCompletion(ctx, req)
 	if err != nil {
 		return openai.ChatCompletionResponse{}, &gperr.APIError{Op: "complete", Message: "API error", Err: err}
 	}
@@ -74,12 +95,12 @@ func (c *Client) CreateChatCompletion(ctx context.Context, req openai.ChatComple
 	return resp, nil
 }
 
-func (c *Client) CreateChatCompletionStream(ctx context.Context, req openai.ChatCompletionRequest) (*openai.ChatCompletionStream, error) {
+func (c *Client) CreateChatCompletionStream(ctx context.Context, req openai.ChatCompletionRequest) (ChatStream, error) {
 	if err := usage.Global().CheckBudget(); err != nil {
 		return nil, err
 	}
 
-	stream, err := c.client.CreateChatCompletionStream(ctx, req)
+	stream, err := c.provider.CreateChatCompletionStream(ctx, req)
 	if err != nil {
 		return nil, &gperr.APIError{Op: "stream", Message: "stream error", Err: err}
 	}
@@ -100,7 +121,7 @@ func (c *Client) StreamComplete(ctx context.Context, messages []openai.ChatCompl
 	}
 
 	model := config.Model()
-	stream, err := c.client.CreateChatCompletionStream(ctx, openai.ChatCompletionRequest{
+	stream, err := c.provider.CreateChatCompletionStream(ctx, openai.ChatCompletionRequest{
 		Model:       model,
 		Messages:    messages,
 		Temperature: config.Temperature(),
@@ -118,21 +139,20 @@ func (c *Client) StreamComplete(ctx context.Context, messages []openai.ChatCompl
 	var full string
 	var streamUsage *openai.Usage
 	for {
-		resp, err := stream.Recv()
+		evt, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
 			return full, &gperr.APIError{Op: "stream", Message: "recv error", Err: err}
 		}
-		if resp.Usage != nil {
-			streamUsage = resp.Usage
+		if evt.Usage != nil {
+			streamUsage = evt.Usage
 		}
-		if len(resp.Choices) > 0 {
-			chunk := resp.Choices[0].Delta.Content
-			full += chunk
+		if evt.Content != "" {
+			full += evt.Content
 			if onChunk != nil {
-				onChunk(chunk)
+				onChunk(evt.Content)
 			}
 		}
 	}
@@ -145,7 +165,6 @@ func (c *Client) StreamComplete(ctx context.Context, messages []openai.ChatCompl
 	return full, nil
 }
 
-// CompleteVision sends a vision request with an image (base64 data URI) and text question.
 func (c *Client) CompleteVision(ctx context.Context, systemPrompt, question, base64Image, mimeType string) (string, error) {
 	if err := usage.Global().CheckBudget(); err != nil {
 		return "", err
@@ -174,7 +193,7 @@ func (c *Client) CompleteVision(ctx context.Context, systemPrompt, question, bas
 		},
 	}
 
-	resp, err := c.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
+	resp, err := c.provider.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
 		Model:       model,
 		Messages:    messages,
 		Temperature: config.Temperature(),
@@ -193,14 +212,15 @@ func (c *Client) CompleteVision(ctx context.Context, systemPrompt, question, bas
 	return resp.Choices[0].Message.Content, nil
 }
 
-// ImageResult holds a generated image's data.
 type ImageResult struct {
 	B64JSON       string
 	RevisedPrompt string
 }
 
-// CreateImage generates images using the OpenAI images API.
 func (c *Client) CreateImage(ctx context.Context, prompt, model, size string, n int) ([]ImageResult, error) {
+	if c.openaiProv == nil {
+		return nil, fmt.Errorf("image generation is only supported with the OpenAI provider")
+	}
 	if err := usage.Global().CheckBudget(); err != nil {
 		return nil, err
 	}
@@ -212,14 +232,13 @@ func (c *Client) CreateImage(ctx context.Context, prompt, model, size string, n 
 		Size:   size,
 	}
 
-	// gpt-image-* models use output_format; DALL-E models use response_format
 	if strings.HasPrefix(model, "gpt-image") {
 		req.OutputFormat = openai.CreateImageOutputFormatPNG
 	} else {
 		req.ResponseFormat = openai.CreateImageResponseFormatB64JSON
 	}
 
-	resp, err := c.client.CreateImage(ctx, req)
+	resp, err := c.openaiProv.CreateImage(ctx, req)
 	if err != nil {
 		return nil, &gperr.APIError{Op: "image", Message: "API error", Err: err}
 	}
@@ -238,24 +257,22 @@ func (c *Client) CreateImage(ctx context.Context, prompt, model, size string, n 
 }
 
 func (c *Client) ListModels(ctx context.Context) ([]string, error) {
-	list, err := c.client.ListModels(ctx)
+	models, err := c.provider.ListModels(ctx)
 	if err != nil {
 		return nil, &gperr.APIError{Op: "list-models", Message: "API error", Err: err}
 	}
-	ids := make([]string, len(list.Models))
-	for i, m := range list.Models {
-		ids[i] = m.ID
-	}
-	sort.Strings(ids)
-	return ids, nil
+	return models, nil
 }
 
 func (c *Client) CreateTranscription(ctx context.Context, request openai.AudioRequest) (openai.AudioResponse, error) {
+	if c.openaiProv == nil {
+		return openai.AudioResponse{}, fmt.Errorf("transcription is only supported with the OpenAI provider")
+	}
 	if err := usage.Global().CheckBudget(); err != nil {
 		return openai.AudioResponse{}, err
 	}
 
-	resp, err := c.client.CreateTranscription(ctx, request)
+	resp, err := c.openaiProv.CreateTranscription(ctx, request)
 	if err != nil {
 		return openai.AudioResponse{}, &gperr.APIError{Op: "transcription", Message: "API error", Err: err}
 	}
@@ -263,11 +280,14 @@ func (c *Client) CreateTranscription(ctx context.Context, request openai.AudioRe
 }
 
 func (c *Client) CreateTranslation(ctx context.Context, request openai.AudioRequest) (openai.AudioResponse, error) {
+	if c.openaiProv == nil {
+		return openai.AudioResponse{}, fmt.Errorf("translation is only supported with the OpenAI provider")
+	}
 	if err := usage.Global().CheckBudget(); err != nil {
 		return openai.AudioResponse{}, err
 	}
 
-	resp, err := c.client.CreateTranslation(ctx, request)
+	resp, err := c.openaiProv.CreateTranslation(ctx, request)
 	if err != nil {
 		return openai.AudioResponse{}, &gperr.APIError{Op: "translation", Message: "API error", Err: err}
 	}
@@ -275,11 +295,14 @@ func (c *Client) CreateTranslation(ctx context.Context, request openai.AudioRequ
 }
 
 func (c *Client) CreateSpeech(ctx context.Context, request openai.CreateSpeechRequest) ([]byte, error) {
+	if c.openaiProv == nil {
+		return nil, fmt.Errorf("speech synthesis is only supported with the OpenAI provider")
+	}
 	if err := usage.Global().CheckBudget(); err != nil {
 		return nil, err
 	}
 
-	resp, err := c.client.CreateSpeech(ctx, request)
+	resp, err := c.openaiProv.CreateSpeech(ctx, request)
 	if err != nil {
 		return nil, &gperr.APIError{Op: "speech", Message: "API error", Err: err}
 	}

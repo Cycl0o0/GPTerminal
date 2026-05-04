@@ -31,6 +31,7 @@ func Init() {
 	configDir := ConfigDir()
 	viper.AddConfigPath(configDir)
 
+	viper.SetDefault("provider", "openai")
 	viper.SetDefault("model", DefaultModel)
 	viper.SetDefault("temperature", DefaultTemp)
 	viper.SetDefault("max_tokens", DefaultMaxTokens)
@@ -47,6 +48,10 @@ func Init() {
 	viper.BindEnv("api_key")
 	viper.BindEnv("model", "OPENAI_MODEL")
 	viper.BindEnv("api_base_url", "OPENAI_API_BASE_URL")
+
+	viper.BindEnv("anthropic_api_key", "ANTHROPIC_API_KEY")
+	viper.BindEnv("gemini_api_key", "GEMINI_API_KEY")
+	viper.BindEnv("provider", "GPTERMINAL_PROVIDER")
 
 	_ = viper.ReadInConfig()
 }
@@ -164,6 +169,22 @@ func RealtimeModel() string {
 	return DefaultRealtimeSessionModel
 }
 
+func ProviderName() string {
+	p := strings.ToLower(viper.GetString("provider"))
+	if p == "" {
+		return "openai"
+	}
+	return p
+}
+
+func AnthropicAPIKey() string {
+	return viper.GetString("anthropic_api_key")
+}
+
+func GeminiAPIKey() string {
+	return viper.GetString("gemini_api_key")
+}
+
 func MCPServers() map[string]interface{} {
 	return viper.GetStringMap("mcp_servers")
 }
@@ -182,7 +203,10 @@ func saveValue(key, value string) error {
 	return os.Chmod(cfgFile, 0600)
 }
 
-func SaveAPIBaseURL(url string) error  { return saveValue("api_base_url", url) }
+func SaveProvider(provider string) error     { return saveValue("provider", provider) }
+func SaveAnthropicAPIKey(key string) error   { return saveValue("anthropic_api_key", key) }
+func SaveGeminiAPIKey(key string) error      { return saveValue("gemini_api_key", key) }
+func SaveAPIBaseURL(url string) error        { return saveValue("api_base_url", url) }
 func SaveModel(model string) error     { return saveValue("model", model) }
 func SaveAPIKey(key string) error      { return saveValue("api_key", key) }
 func SaveS2TModel(model string) error  { return saveValue("s2t_model", model) }

@@ -17,6 +17,7 @@ import (
 
 const (
 	stepWelcome = iota
+	stepProvider
 	stepAPIKey
 	stepBaseURL
 	stepModel
@@ -52,6 +53,7 @@ type Model struct {
 	height    int
 	ready     bool
 
+	provider      string
 	apiKey        string
 	baseURL       string
 	model         string
@@ -61,20 +63,24 @@ type Model struct {
 	shell         string
 	err           string
 
+	providerCursor int
+	providerNames  []string
+
 	availableModels []string
 	fetchingModels  bool
 	modelCursor     int
 	modelPickMode   bool
 
-	savedAPIKey       bool
-	savedBaseURL      bool
-	savedModel        bool
-	savedImageModel   bool
-	savedVoice        bool
+	savedProvider      bool
+	savedAPIKey        bool
+	savedBaseURL       bool
+	savedModel         bool
+	savedImageModel    bool
+	savedVoice         bool
 	savedRealtimeModel bool
-	shellInstalled    bool
-	shellSkipped      bool
-	shellError        string
+	shellInstalled     bool
+	shellSkipped       bool
+	shellError         string
 }
 
 func NewModel() Model {
@@ -84,14 +90,16 @@ func NewModel() Model {
 	ti.Width = 60
 
 	return Model{
-		step:          stepWelcome,
-		textInput:     ti,
-		shell:         detectShell(),
-		baseURL:       config.DefaultBaseURL,
-		model:         config.DefaultModel,
-		imageModel:    config.DefaultImageModel,
-		voice:         config.DefaultT2SVoice,
-		realtimeModel: config.DefaultRealtimeSessionModel,
+		step:           stepWelcome,
+		textInput:      ti,
+		shell:          detectShell(),
+		provider:       "openai",
+		providerNames:  []string{"openai", "anthropic", "gemini"},
+		baseURL:        config.DefaultBaseURL,
+		model:          config.DefaultModel,
+		imageModel:     config.DefaultImageModel,
+		voice:          config.DefaultT2SVoice,
+		realtimeModel:  config.DefaultRealtimeSessionModel,
 	}
 }
 
@@ -123,6 +131,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		m.err = ""
+
+		// Provider pick step
+		if m.step == stepProvider {
+			switch msg.Type {
+			case tea.KeyCtrlC, tea.KeyEsc:
+				return m, tea.Quit
+			case tea.KeyUp:
+				if m.providerCursor > 0 {
+					m.providerCursor--
+				}
+				return m, nil
+			case tea.KeyDown:
+				if m.providerCursor < len(m.providerNames)-1 {
+					m.providerCursor++
+				}
+				return m, nil
+			case tea.KeyEnter:
+				return m.handleEnter()
+			}
+			return m, nil
+		}
 
 		// Pick mode navigation for chat model step
 		if m.step == stepModel && m.modelPickMode {
@@ -172,9 +201,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	switch m.step {
 	case stepWelcome:
+		m.step = stepProvider
+		return m, nil
+
+	case stepProvider:
+		m.provider = m.providerNames[m.providerCursor]
+		if err := config.SaveProvider(m.provider); err != nil {
+			m.err = fmt.Sprintf("Failed to save: %v", err)
+			return m, nil
+		}
+		m.savedProvider = true
 		m.step = stepAPIKey
+		switch m.provider {
+		case "anthropic":
+			m.textInput.Placeholder = "sk-ant-... (Anthropic API key)"
+		case "gemini":
+			m.textInput.Placeholder = "AI... (Google Gemini API key)"
+		default:
+			m.textInput.Placeholder = "sk-... (or press Tab to skip for Ollama)"
+		}
 		m.textInput.SetValue("")
-		m.textInput.Placeholder = "sk-... (or press Tab to skip for Ollama)"
 		m.textInput.EchoMode = textinput.EchoPassword
 		m.textInput.EchoCharacter = '*'
 		m.textInput.Focus()
@@ -183,7 +229,16 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	case stepAPIKey:
 		val := strings.TrimSpace(m.textInput.Value())
 		if val != "" {
-			if err := config.SaveAPIKey(val); err != nil {
+			var err error
+			switch m.provider {
+			case "anthropic":
+				err = config.SaveAnthropicAPIKey(val)
+			case "gemini":
+				err = config.SaveGeminiAPIKey(val)
+			default:
+				err = config.SaveAPIKey(val)
+			}
+			if err != nil {
 				m.err = fmt.Sprintf("Failed to save: %v", err)
 				return m, nil
 			}
@@ -299,6 +354,15 @@ func (m Model) enterStep(step int, current, placeholder string) (tea.Model, tea.
 
 func (m Model) handleSkip() (tea.Model, tea.Cmd) {
 	switch m.step {
+	case stepProvider:
+		m.step = stepAPIKey
+		m.textInput.SetValue("")
+		m.textInput.Placeholder = "sk-... (or press Tab to skip for Ollama)"
+		m.textInput.EchoMode = textinput.EchoPassword
+		m.textInput.EchoCharacter = '*'
+		m.textInput.Focus()
+		return m, textinput.Blink
+
 	case stepAPIKey:
 		m.step = stepBaseURL
 		m.textInput.SetValue(m.baseURL)
@@ -346,6 +410,8 @@ func (m Model) View() string {
 	switch m.step {
 	case stepWelcome:
 		content = m.viewWelcome()
+	case stepProvider:
+		content = m.viewProvider()
 	case stepAPIKey:
 		content = m.viewAPIKey()
 	case stepBaseURL:
@@ -393,10 +459,41 @@ func (m Model) viewWelcome() string {
 	return b.String()
 }
 
+func (m Model) viewProvider() string {
+	var b strings.Builder
+
+	b.WriteString(m.stepHeader("Step 1/8", "AI Provider"))
+	b.WriteString("\n\n")
+	b.WriteString("Select your AI provider:\n\n")
+
+	descriptions := map[string]string{
+		"openai":    "OpenAI (GPT-4o, GPT-4, DALL-E, Whisper) or OpenAI-compatible APIs (Ollama, etc.)",
+		"anthropic": "Anthropic (Claude Sonnet, Opus, Haiku) with native tool use and extended thinking",
+		"gemini":    "Google Gemini (Gemini Pro, Flash) with native function calling",
+	}
+
+	for i, name := range m.providerNames {
+		if i == m.providerCursor {
+			b.WriteString(accentStyle.Render(fmt.Sprintf("  > %s", name)))
+		} else {
+			b.WriteString(fmt.Sprintf("    %s", name))
+		}
+		b.WriteString(fmt.Sprintf("  %s\n", dimStyle.Render(descriptions[name])))
+	}
+
+	b.WriteString("\n")
+	if m.err != "" {
+		b.WriteString(errorStyle.Render(m.err))
+		b.WriteString("\n\n")
+	}
+	b.WriteString(m.navHints("Up/Down: navigate", "Enter: select", "Tab: skip (keep openai)", "Esc: quit"))
+	return b.String()
+}
+
 func (m Model) viewAPIKey() string {
 	var b strings.Builder
 
-	b.WriteString(m.stepHeader("Step 1/7", "API Key"))
+	b.WriteString(m.stepHeader("Step 2/8", "API Key"))
 	b.WriteString("\n\n")
 	b.WriteString("Enter your API key.\n")
 	b.WriteString(dimStyle.Render("If you're using Ollama or another local provider, press Tab to skip."))
@@ -414,7 +511,7 @@ func (m Model) viewAPIKey() string {
 func (m Model) viewBaseURL() string {
 	var b strings.Builder
 
-	b.WriteString(m.stepHeader("Step 2/7", "API Base URL"))
+	b.WriteString(m.stepHeader("Step 3/8", "API Base URL"))
 	b.WriteString("\n\n")
 	b.WriteString("API endpoint URL.\n")
 	b.WriteString(dimStyle.Render("For Ollama use: http://localhost:11434/v1"))
@@ -432,7 +529,7 @@ func (m Model) viewBaseURL() string {
 func (m Model) viewModel() string {
 	var b strings.Builder
 
-	b.WriteString(m.stepHeader("Step 3/7", "Chat Model"))
+	b.WriteString(m.stepHeader("Step 4/8", "Chat Model"))
 	b.WriteString("\n\n")
 
 	if m.modelPickMode && len(m.availableModels) > 0 {
@@ -491,7 +588,7 @@ func (m Model) viewModel() string {
 func (m Model) viewImageModel() string {
 	var b strings.Builder
 
-	b.WriteString(m.stepHeader("Step 4/7", "Image Model"))
+	b.WriteString(m.stepHeader("Step 5/8", "Image Model"))
 	b.WriteString("\n\n")
 	b.WriteString("Image generation model.\n")
 	b.WriteString(dimStyle.Render("Examples: gpt-image-1, dall-e-3, dall-e-2"))
@@ -509,7 +606,7 @@ func (m Model) viewImageModel() string {
 func (m Model) viewVoice() string {
 	var b strings.Builder
 
-	b.WriteString(m.stepHeader("Step 5/7", "Text-to-Speech Voice"))
+	b.WriteString(m.stepHeader("Step 6/8", "Text-to-Speech Voice"))
 	b.WriteString("\n\n")
 	b.WriteString("Voice for text-to-speech synthesis.\n")
 	b.WriteString(dimStyle.Render("OpenAI voices: alloy, ash, coral, echo, fable, marin, nova, onyx, sage, shimmer"))
@@ -529,7 +626,7 @@ func (m Model) viewVoice() string {
 func (m Model) viewRealtimeModel() string {
 	var b strings.Builder
 
-	b.WriteString(m.stepHeader("Step 6/7", "Realtime Transcription Model"))
+	b.WriteString(m.stepHeader("Step 7/8", "Realtime Transcription Model"))
 	b.WriteString("\n\n")
 	b.WriteString("Session model for live microphone transcription (--mic).\n")
 	b.WriteString(dimStyle.Render("Examples: gpt-realtime, gpt-4o-realtime-preview"))
@@ -549,7 +646,7 @@ func (m Model) viewRealtimeModel() string {
 func (m Model) viewShell() string {
 	var b strings.Builder
 
-	b.WriteString(m.stepHeader("Step 7/7", "Shell Integration"))
+	b.WriteString(m.stepHeader("Step 8/8", "Shell Integration"))
 	b.WriteString("\n\n")
 	b.WriteString("Add this line to your shell config to enable aliases and shortcuts:\n\n")
 
@@ -584,6 +681,11 @@ func (m Model) viewDone() string {
 	check := successStyle.Render("[OK]")
 	dash := dimStyle.Render(" --")
 
+	if m.savedProvider {
+		b.WriteString(fmt.Sprintf("  %s Provider         %s\n", check, m.provider))
+	} else {
+		b.WriteString(fmt.Sprintf("  %s Provider         %s (default)\n", dash, m.provider))
+	}
 	if m.savedAPIKey {
 		b.WriteString(fmt.Sprintf("  %s API Key          configured\n", check))
 	} else {

@@ -1,5 +1,5 @@
 BINARY := gpterminal
-VERSION := 2.5.1
+VERSION := 2.6.0
 GOFLAGS := -ldflags="-s -w"
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 

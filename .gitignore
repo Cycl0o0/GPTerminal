@@ -18,6 +18,9 @@ config.yaml
 # Chat history
 chat_history.json
 
+# Memory store
+memory.json
+
 # Usage tracking
 usage.json
 
