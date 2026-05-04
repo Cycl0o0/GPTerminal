@@ -18,6 +18,7 @@ const (
 	KindChat  Kind = "chat"
 	KindGptDo Kind = "gptdo"
 	KindAgent Kind = "agent"
+	KindCode  Kind = "code"
 )
 
 type ChatMessage struct {
@@ -249,6 +250,13 @@ func entryFromRecord(record *Record) Entry {
 			entry.AgentCompleted = record.Agent.Completed
 			entry.AgentSummary = preview(record.Agent.Summary)
 		}
+	case KindCode:
+		if record.Chat != nil {
+			entry.ChatMessages = len(record.Chat.Transcript)
+			if n := len(record.Chat.Transcript); n > 0 {
+				entry.LastPreview = preview(record.Chat.Transcript[n-1].Content)
+			}
+		}
 	}
 
 	return entry
@@ -318,6 +326,26 @@ func ExportMarkdown(name string) (string, error) {
 			if strings.TrimSpace(record.GptDo.Summary) != "" {
 				b.WriteString("---\n\n")
 				b.WriteString(fmt.Sprintf("**Summary:** %s\n", record.GptDo.Summary))
+			}
+		}
+
+	case KindCode:
+		b.WriteString(fmt.Sprintf("# Code Session: %s\n\n", record.Name))
+		b.WriteString(fmt.Sprintf("**Date:** %s\n\n", record.UpdatedAt.Local().Format(time.RFC1123)))
+		b.WriteString("---\n\n")
+
+		if record.Chat != nil {
+			for _, msg := range record.Chat.Transcript {
+				if msg.Role == "system" || strings.TrimSpace(msg.Content) == "" {
+					continue
+				}
+				ts := ""
+				if msg.Timestamp != "" {
+					ts = " — " + msg.Timestamp
+				}
+				b.WriteString(fmt.Sprintf("### %s%s\n\n", msg.Role, ts))
+				b.WriteString(msg.Content)
+				b.WriteString("\n\n")
 			}
 		}
 

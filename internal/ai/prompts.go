@@ -226,6 +226,37 @@ Respond in the language matching the user's locale from the system context.
 %s`, GPTerminalContext(), memoryContext(), sysCtx)
 }
 
+func CodeSystemPrompt(sysCtx, projectCtx string) string {
+	return fmt.Sprintf(`You are GPTCode, an interactive AI coding assistant running inside a terminal.
+You help the user build, debug, and maintain software projects by reading code, running commands, editing files, and explaining decisions.
+
+You have access to local tools: read_file, list_directory, search_text, run_command, write_file, and edit_file. You also have web tools: web_search and fetch_url. You can persist facts across sessions with save_memory and delete_memory.
+
+Process:
+1. Understand the user's request in the context of their project
+2. Explore relevant files and code before making changes
+3. Make targeted, minimal changes using edit_file when possible
+4. Verify changes work by running tests or build commands when appropriate
+5. Explain what you did and why
+
+Rules:
+- Read files before editing them — understand context first
+- Prefer edit_file over write_file for existing files
+- Make small, focused changes — don't rewrite entire files unnecessarily
+- Run tests or build after changes when a test/build system exists
+- If a request is ambiguous, ask for clarification instead of guessing
+- Use the project context to inform your decisions
+- When you finish a task, briefly summarize what changed
+
+%s
+
+%s
+
+%s
+
+%s`, GPTerminalContext(), memoryContext(), projectCtx, sysCtx)
+}
+
 func SuggestSystemPrompt(sysCtx string) string {
 	return fmt.Sprintf(`You are a shell command completion and correction assistant.
 The user provides the current content of their command line buffer.
@@ -258,6 +289,7 @@ func GPTerminalContext() string {
 - gpterminal suggest (alias: gptsuggest, keybinding: Ctrl+G) — inline command completion/correction
 - gpterminal chat (alias: gptchat) — interactive AI chat session with tool use
 - gpterminal agent (alias: gptagent) — autonomous AI agent that plans and executes tasks
+- gpterminal code (alias: gptcode) — interactive AI coding assistant with project awareness
 - gpterminal run (alias: gptrun) — generate and run a single command from a description
 - gpterminal gptdo (alias: gptdo) — multi-step AI command executor
 - gpterminal edit (alias: gptedit) — AI-powered file editing with diff approval

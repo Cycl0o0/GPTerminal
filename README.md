@@ -21,6 +21,7 @@ AI-powered terminal assistant that integrates OpenAI GPT, Anthropic Claude, Goog
 - **GPTImagine** (`gpterminal imagine "<prompt>"`) - Image generation with OpenAI image models
 - **Inline Suggest** (`gpterminal suggest` / `Ctrl+G`) - AI-powered inline command completion and correction
 - **Agent Mode** (`gpterminal agent "<objective>"`) - Autonomous AI agent that plans and executes multi-step tasks
+- **GPTCode** (`gpterminal code`) - Interactive AI coding assistant with project-aware context, slash commands, and session persistence
 - **Stats Dashboard** (`gpterminal stats`) - Usage statistics with per-command tracking and optional TUI dashboard
 - **Auto-Update** (`gpterminal update`) - Check for and install updates from GitHub Releases
 - **Custom Templates** (`gpterminal template`) - Define custom AI commands via YAML template files
@@ -360,6 +361,30 @@ $ gpterminal resume myagent
 ```
 
 `gptagent` launches an autonomous AI agent that plans and executes multi-step tasks. The agent uses available tools (read_file, list_directory, search_text, run_command, write_file, edit_file) to accomplish objectives. Commands with risk score above 7/10 require manual approval. Use `--session` to save progress and resume later. When MCP servers are configured, their tools are also available to the agent.
+
+### GPTCode
+
+```bash
+$ gpterminal code
+$ gpterminal code --session myproject
+$ gpterminal resume myproject
+```
+
+`gptcode` launches an interactive AI coding assistant inspired by Claude Code. It auto-detects your project context (git branch, file tree, manifest files) and provides a persistent REPL for building, debugging, and maintaining software.
+
+**Slash commands:**
+
+| Command | Description |
+|---------|-------------|
+| `/help` | Show available commands |
+| `/clear` | Clear conversation and start fresh |
+| `/compact` | Summarize conversation to reduce context |
+| `/diff` | Show git diff of project changes |
+| `/status` | Show git status |
+| `/undo` | Discard unstaged changes (with confirmation) |
+| `/quit` | Exit GPTCode |
+
+The assistant has full tool access (read_file, edit_file, write_file, run_command, search_text, web_search, fetch_url) with approval workflows for file writes and commands. Use `--session` to save and resume coding sessions.
 
 ### Conversation Memory
 

@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/cycl0o0/GPTerminal/internal/agent"
+	"github.com/cycl0o0/GPTerminal/internal/code"
 	"github.com/cycl0o0/GPTerminal/internal/gptdo"
 	"github.com/cycl0o0/GPTerminal/internal/session"
 	"github.com/spf13/cobra"
@@ -47,6 +48,12 @@ var resumeCmd = &cobra.Command{
 			}
 		case session.KindAgent:
 			if err := agent.Resume(cmd.Context(), name); err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+		case session.KindCode:
+			cfg := code.Config{SessionName: name}
+			if err := code.Run(cmd.Context(), cfg); err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
 				os.Exit(1)
 			}

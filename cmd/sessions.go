@@ -152,7 +152,7 @@ func printSessionRecord(record *session.Record) {
 	fmt.Printf("Updated: %s\n", record.UpdatedAt.Local().Format(time.RFC1123))
 
 	switch record.Kind {
-	case session.KindChat:
+	case session.KindChat, session.KindCode:
 		if record.Chat == nil {
 			return
 		}
@@ -178,7 +178,7 @@ func printSessionRecord(record *session.Record) {
 
 func sessionDetail(entry session.Entry) string {
 	switch entry.Kind {
-	case session.KindChat:
+	case session.KindChat, session.KindCode:
 		detail := fmt.Sprintf("%d messages", entry.ChatMessages)
 		if entry.LastPreview != "" {
 			detail += " | " + entry.LastPreview
