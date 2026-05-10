@@ -70,8 +70,10 @@ func (p *AnthropicProvider) convertRequest(req openai.ChatCompletionRequest) ant
 				blocks = append(blocks, anthropic.NewTextBlock(msg.Content))
 			}
 			for _, tc := range msg.ToolCalls {
-				var input any
-				_ = json.Unmarshal([]byte(tc.Function.Arguments), &input)
+				input := map[string]any{}
+				if tc.Function.Arguments != "" {
+					_ = json.Unmarshal([]byte(tc.Function.Arguments), &input)
+				}
 				blocks = append(blocks, anthropic.NewToolUseBlock(tc.ID, input, tc.Function.Name))
 			}
 			if len(blocks) > 0 {
@@ -232,7 +234,11 @@ func (s *anthropicStream) Recv() (ChatStreamEvent, error) {
 			idx := int(evt.Index)
 			if tc, ok := s.toolCalls[idx]; ok {
 				if sb, ok := s.toolInputs[idx]; ok {
-					tc.Function.Arguments = sb.String()
+					if args := sb.String(); args != "" {
+						tc.Function.Arguments = args
+					} else {
+						tc.Function.Arguments = "{}"
+					}
 				}
 				calls := []openai.ToolCall{*tc}
 				delete(s.toolCalls, idx)
