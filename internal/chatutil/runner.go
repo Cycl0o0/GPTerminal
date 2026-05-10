@@ -103,10 +103,6 @@ func (r *Runner) Stream(ctx context.Context, history []openai.ChatCompletionMess
 	messages := cloneMessages(history)
 
 	for i := 0; i < maxToolRounds; i++ {
-		if opts.OnThinking != nil {
-			opts.OnThinking("Thinking...")
-		}
-
 		msg, err := r.streamAssistant(ctx, messages, opts)
 		if err != nil {
 			return "", messages, err
@@ -181,24 +177,31 @@ func (r *Runner) streamAssistant(ctx context.Context, history []openai.ChatCompl
 		}
 		if evt.ReasoningContent != "" {
 			reasoning.WriteString(evt.ReasoningContent)
-			if opts.OnThinking != nil {
-				opts.OnThinking(strings.TrimSpace(reasoning.String()))
-			}
 		}
 		if evt.Content != "" {
 			content.WriteString(evt.Content)
-			if opts.OnContent != nil {
-				opts.OnContent(evt.Content)
-			}
 		}
 		mergeToolCalls(toolCalls, evt.ToolCalls)
+	}
+
+	ordered := orderedToolCalls(toolCalls)
+
+	// Only emit thinking/content when no tool calls — avoids leaking
+	// the AI's planning text that precedes tool invocations.
+	if len(ordered) == 0 {
+		if reasoning.Len() > 0 && opts.OnThinking != nil {
+			opts.OnThinking(strings.TrimSpace(reasoning.String()))
+		}
+		if content.Len() > 0 && opts.OnContent != nil {
+			opts.OnContent(content.String())
+		}
 	}
 
 	r.client.RecordUsage(config.Model(), usageData)
 	return openai.ChatCompletionMessage{
 		Role:      openai.ChatMessageRoleAssistant,
 		Content:   content.String(),
-		ToolCalls: orderedToolCalls(toolCalls),
+		ToolCalls: ordered,
 	}, nil
 }
 
