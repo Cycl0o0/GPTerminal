@@ -55,16 +55,10 @@ func (p *OpenClawProvider) ensureClient(ctx context.Context, eventCh chan<- chat
 	}
 
 	client := gateway.NewClient(
-		gateway.WithToken(p.token),
+		gateway.WithPassword(p.token),
 		gateway.WithRole(protocol.RoleOperator),
 		gateway.WithScopes(protocol.ScopeOperatorRead, protocol.ScopeOperatorWrite),
 		gateway.WithCaps(protocol.ClientCapToolEvents),
-		gateway.WithClientInfo(protocol.ClientInfo{
-			ID:       protocol.ClientIDGateway,
-			Version:  "2.9.0",
-			Platform: "go",
-			Mode:     protocol.ClientModeCLI,
-		}),
 		gateway.WithOnEvent(func(ev protocol.Event) {
 			if ev.EventName == protocol.EventChat {
 				eventCh <- chatEventMsg{payload: ev.Payload}
