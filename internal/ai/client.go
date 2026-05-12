@@ -26,6 +26,25 @@ func NewClientWithBaseURL(baseURL string) (*Client, error) {
 	provider := config.ProviderName()
 
 	switch provider {
+	case "openclaw":
+		ocURL := config.OpenClawURL()
+		if ocURL == "" {
+			return nil, fmt.Errorf("OpenClaw URL not set. Run: gpterminal config set-openclaw-url <url>\nOr set OPENCLAW_URL environment variable")
+		}
+		ocToken := config.OpenClawToken()
+		ocAgent := config.OpenClawAgent()
+		if ocToken != "" {
+			op := NewOpenClawProvider(ocURL, ocToken, ocAgent)
+			return &Client{provider: op}, nil
+		}
+		ocUser := config.OpenClawUsername()
+		ocPass := config.OpenClawPassword()
+		if ocUser != "" && ocPass != "" {
+			op := NewOpenClawProviderWithPassword(ocURL, ocUser, ocPass, ocAgent)
+			return &Client{provider: op}, nil
+		}
+		return nil, fmt.Errorf("OpenClaw auth not configured. Set OPENCLAW_TOKEN or OPENCLAW_USERNAME + OPENCLAW_PASSWORD\nRun: gpterminal config set-openclaw-token <token>")
+
 	case "anthropic":
 		key := config.AnthropicAPIKey()
 		if key == "" {
@@ -54,6 +73,10 @@ func NewClientWithBaseURL(baseURL string) (*Client, error) {
 
 func (c *Client) ProviderName() string {
 	return c.provider.Name()
+}
+
+func (c *Client) IsOpenClaw() bool {
+	return c != nil && c.provider != nil && c.provider.Name() == "openclaw"
 }
 
 func (c *Client) Complete(ctx context.Context, messages []openai.ChatCompletionMessage) (string, error) {

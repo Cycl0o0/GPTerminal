@@ -57,6 +57,7 @@ type Model struct {
 	autoApproveCommands bool
 	streamCancel        context.CancelFunc
 	notice              string
+	isOpenClaw          bool
 }
 
 func NewModel(client *ai.Client, sysInfo system.SystemInfo, opts Options) Model {
@@ -73,18 +74,25 @@ func NewModel(client *ai.Client, sysInfo system.SystemInfo, opts Options) Model 
 		glamour.WithWordWrap(80),
 	)
 
-	sysPrompt := ai.ChatSystemPrompt(sysInfo.ContextBlock())
+	isOC := client.IsOpenClaw()
+
+	var baseHistory []openai.ChatCompletionMessage
+	if !isOC {
+		sysPrompt := ai.ChatSystemPrompt(sysInfo.ContextBlock())
+		baseHistory = []openai.ChatCompletionMessage{
+			{Role: openai.ChatMessageRoleSystem, Content: sysPrompt},
+		}
+	}
 
 	m := Model{
-		textarea: ta,
-		messages: []chatMessage{},
-		history: []openai.ChatCompletionMessage{
-			{Role: openai.ChatMessageRoleSystem, Content: sysPrompt},
-		},
+		textarea:    ta,
+		messages:    []chatMessage{},
+		history:     baseHistory,
 		runner:      chatutil.NewRunner(client, sysInfo),
 		sysInfo:     sysInfo,
 		sessionName: opts.SessionName,
 		renderer:    renderer,
+		isOpenClaw:  isOC,
 	}
 
 	loadedMessages, loadedHistory := loadChatState(opts.SessionName)

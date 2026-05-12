@@ -1,6 +1,6 @@
 # GPTerminal
 
-AI-powered terminal assistant that integrates OpenAI GPT, Anthropic Claude, Google Gemini, or other OpenAI API-compatible models (like Ollama) into your Linux, macOS, and Windows terminal.
+AI-powered terminal assistant that integrates OpenAI GPT, Anthropic Claude, Google Gemini, OpenClaw, or other OpenAI API-compatible models (like Ollama) into your Linux, macOS, and Windows terminal.
 
 ## Features
 
@@ -29,7 +29,8 @@ AI-powered terminal assistant that integrates OpenAI GPT, Anthropic Claude, Goog
 - **Custom Templates** (`gpterminal template`) - Define custom AI commands via YAML template files
 - **Web Search & Fetch** - Chat and agent can search the web (DuckDuckGo) and fetch URL content as tools
 - **MCP Support** - Connect Model Context Protocol servers to extend available tools in chat and agent, with automatic reconnect on server crash
-- **Multi-Provider** - Native support for OpenAI, Anthropic Claude, and Google Gemini with provider-specific features (extended thinking, native tool use)
+- **Multi-Provider** - Native support for OpenAI, Anthropic Claude, Google Gemini, and OpenClaw with provider-specific features (extended thinking, native tool use, server-side agents)
+- **OpenClaw Integration** - Connect to an OpenClaw server for autonomous AI agent execution with server-side tools, SSE streaming, and Bearer/password authentication
 - **Conversation Memory** (`gpterminal memory`) - Persistent memory across chat sessions so the AI remembers your project, preferences, and context
 - **Patch-Based Editing** - `edit_file` tool for targeted search-and-replace file edits with diff preview and approval (safer than full rewrites)
 - **Command Hooks** - Run custom shell commands before/after command execution via config
@@ -104,6 +105,16 @@ gpterminal config set-model claude-sonnet-4-20250514
 gpterminal config set-provider gemini
 gpterminal config set-gemini-key YOUR_GEMINI_API_KEY
 gpterminal config set-model gemini-2.0-flash
+
+# OpenClaw (server-side AI agent)
+gpterminal config set-provider openclaw
+gpterminal config set-openclaw-url http://your-server:18789
+gpterminal config set-openclaw-token YOUR_TOKEN
+# Or use password auth instead of token:
+gpterminal config set-openclaw-username YOUR_USER
+gpterminal config set-openclaw-password YOUR_PASS
+# Optionally set an agent name:
+gpterminal config set-openclaw-agent my-agent
 ```
 
 Or run the interactive setup wizard:
@@ -546,7 +557,7 @@ $ gpterminal config usage --weekly  # per-week breakdown
 ### Configuration
 
 ```bash
-gpterminal config set-provider <provider>    # Set provider (openai, anthropic, gemini)
+gpterminal config set-provider <provider>    # Set provider (openai, anthropic, gemini, openclaw)
 gpterminal config set-key <key>              # Save OpenAI API key
 gpterminal config set-anthropic-key <key>    # Save Anthropic API key
 gpterminal config set-gemini-key <key>       # Save Gemini API key
@@ -560,7 +571,7 @@ Config is stored at `~/.config/gpterminal/config.yaml`.
 
 | Key | Default | Env Variable | Description |
 |-----|---------|-------------|-------------|
-| `provider` | `openai` | `GPTERMINAL_PROVIDER` | AI provider: `openai`, `anthropic`, or `gemini` |
+| `provider` | `openai` | `GPTERMINAL_PROVIDER` | AI provider: `openai`, `anthropic`, `gemini`, or `openclaw` |
 | `api_key` | - | `OPENAI_API_KEY` | OpenAI API key |
 | `anthropic_api_key` | - | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `gemini_api_key` | - | `GEMINI_API_KEY` | Google Gemini API key |
@@ -568,6 +579,11 @@ Config is stored at `~/.config/gpterminal/config.yaml`.
 | `model` | `gpt-4o-mini` | `OPENAI_MODEL` | Model to use |
 | `temperature` | `0.7` | - | Response creativity |
 | `max_tokens` | `2048` | - | Max response length |
+| `openclaw_url` | - | `OPENCLAW_URL` | OpenClaw Gateway URL |
+| `openclaw_token` | - | `OPENCLAW_TOKEN` | OpenClaw Bearer token |
+| `openclaw_agent` | - | `OPENCLAW_AGENT` | OpenClaw agent name |
+| `openclaw_username` | - | `OPENCLAW_USERNAME` | OpenClaw username (password auth) |
+| `openclaw_password` | - | `OPENCLAW_PASSWORD` | OpenClaw password (password auth) |
 | `mcp_servers` | - | - | MCP server configurations (see MCP Support) |
 
 ## Author

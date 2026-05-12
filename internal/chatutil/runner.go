@@ -101,6 +101,7 @@ func (r *Runner) Complete(ctx context.Context, history []openai.ChatCompletionMe
 
 func (r *Runner) Stream(ctx context.Context, history []openai.ChatCompletionMessage, opts StreamOptions) (string, []openai.ChatCompletionMessage, error) {
 	messages := cloneMessages(history)
+	isOpenClaw := r.client.IsOpenClaw()
 
 	for i := 0; i < maxToolRounds; i++ {
 		msg, err := r.streamAssistant(ctx, messages, opts)
@@ -109,7 +110,7 @@ func (r *Runner) Stream(ctx context.Context, history []openai.ChatCompletionMess
 		}
 		messages = append(messages, msg)
 
-		if len(msg.ToolCalls) == 0 {
+		if len(msg.ToolCalls) == 0 || isOpenClaw {
 			return strings.TrimSpace(msg.Content), messages, nil
 		}
 
@@ -136,9 +137,14 @@ func (r *Runner) Stream(ctx context.Context, history []openai.ChatCompletionMess
 }
 
 func (r *Runner) streamAssistant(ctx context.Context, history []openai.ChatCompletionMessage, opts StreamOptions) (openai.ChatCompletionMessage, error) {
-	tools := chatTools(opts.AllowWriteTools)
-	if r.mcp != nil {
-		tools = append(tools, r.mcp.Tools()...)
+	isOpenClaw := r.client.IsOpenClaw()
+
+	var tools []openai.Tool
+	if !isOpenClaw {
+		tools = chatTools(opts.AllowWriteTools)
+		if r.mcp != nil {
+			tools = append(tools, r.mcp.Tools()...)
+		}
 	}
 
 	req := openai.ChatCompletionRequest{
@@ -177,18 +183,33 @@ func (r *Runner) streamAssistant(ctx context.Context, history []openai.ChatCompl
 		}
 		if evt.ReasoningContent != "" {
 			reasoning.WriteString(evt.ReasoningContent)
+			if isOpenClaw && opts.OnThinking != nil {
+				opts.OnThinking(evt.ReasoningContent)
+			}
 		}
 		if evt.Content != "" {
 			content.WriteString(evt.Content)
+			if isOpenClaw && opts.OnContent != nil {
+				opts.OnContent(evt.Content)
+			}
 		}
-		mergeToolCalls(toolCalls, evt.ToolCalls)
+		if evt.ServerToolCall != nil && opts.OnToolCall != nil {
+			opts.OnToolCall(evt.ServerToolCall.Name, evt.ServerToolCall.Arguments)
+		}
+		if evt.ServerToolResult != nil && opts.OnToolResult != nil {
+			opts.OnToolResult(evt.ServerToolResult.Name, evt.ServerToolResult.Result)
+		}
+		if !isOpenClaw {
+			mergeToolCalls(toolCalls, evt.ToolCalls)
+		}
 	}
 
 	ordered := orderedToolCalls(toolCalls)
 
-	// Only emit thinking/content when no tool calls — avoids leaking
-	// the AI's planning text that precedes tool invocations.
-	if len(ordered) == 0 {
+	// For OpenClaw, always emit accumulated content (server-side tool events
+	// are already forwarded inline above). For other providers, only emit
+	// when no tool calls to avoid leaking planning text.
+	if !isOpenClaw && len(ordered) == 0 {
 		if reasoning.Len() > 0 && opts.OnThinking != nil {
 			opts.OnThinking(strings.TrimSpace(reasoning.String()))
 		}

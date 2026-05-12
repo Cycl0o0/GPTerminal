@@ -12,11 +12,19 @@ type ChatStream interface {
 	Close()
 }
 
+type ServerToolEvent struct {
+	Name      string
+	Arguments string
+	Result    string
+}
+
 type ChatStreamEvent struct {
 	Content          string
 	ReasoningContent string
 	ToolCalls        []openai.ToolCall
 	Usage            *openai.Usage
+	ServerToolCall   *ServerToolEvent
+	ServerToolResult *ServerToolEvent
 }
 
 type Provider interface {

@@ -94,7 +94,7 @@ func NewModel() Model {
 		textInput:      ti,
 		shell:          detectShell(),
 		provider:       "openai",
-		providerNames:  []string{"openai", "anthropic", "gemini"},
+		providerNames:  []string{"openai", "anthropic", "gemini", "openclaw"},
 		baseURL:        config.DefaultBaseURL,
 		model:          config.DefaultModel,
 		imageModel:     config.DefaultImageModel,
@@ -217,6 +217,8 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			m.textInput.Placeholder = "sk-ant-... (Anthropic API key)"
 		case "gemini":
 			m.textInput.Placeholder = "AI... (Google Gemini API key)"
+		case "openclaw":
+			m.textInput.Placeholder = "Gateway Token (Bearer auth)"
 		default:
 			m.textInput.Placeholder = "sk-... (or press Tab to skip for Ollama)"
 		}
@@ -235,6 +237,8 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 				err = config.SaveAnthropicAPIKey(val)
 			case "gemini":
 				err = config.SaveGeminiAPIKey(val)
+			case "openclaw":
+				err = config.SaveOpenClawToken(val)
 			default:
 				err = config.SaveAPIKey(val)
 			}
@@ -246,8 +250,13 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			m.savedAPIKey = true
 		}
 		m.step = stepBaseURL
-		m.textInput.SetValue(m.baseURL)
-		m.textInput.Placeholder = config.DefaultBaseURL
+		if m.provider == "openclaw" {
+			m.textInput.SetValue("")
+			m.textInput.Placeholder = "http://your-server:18789"
+		} else {
+			m.textInput.SetValue(m.baseURL)
+			m.textInput.Placeholder = config.DefaultBaseURL
+		}
 		m.textInput.EchoMode = textinput.EchoNormal
 		m.textInput.EchoCharacter = 0
 		m.textInput.Focus()
@@ -255,6 +264,21 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 
 	case stepBaseURL:
 		val := strings.TrimSpace(m.textInput.Value())
+		if m.provider == "openclaw" {
+			if val != "" {
+				if err := config.SaveOpenClawURL(val); err != nil {
+					m.err = fmt.Sprintf("Failed to save: %v", err)
+					return m, nil
+				}
+				m.baseURL = val
+				m.savedBaseURL = true
+			}
+			m.step = stepModel
+			m.textInput.SetValue("")
+			m.textInput.Placeholder = "agent name (e.g. default)"
+			m.textInput.Focus()
+			return m, textinput.Blink
+		}
 		if val != "" && val != config.DefaultBaseURL {
 			if err := config.SaveAPIBaseURL(val); err != nil {
 				m.err = fmt.Sprintf("Failed to save: %v", err)
@@ -271,6 +295,20 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		return m, tea.Batch(textinput.Blink, fetchModelsCmd())
 
 	case stepModel:
+		if m.provider == "openclaw" {
+			val := strings.TrimSpace(m.textInput.Value())
+			if val != "" {
+				if err := config.SaveOpenClawAgent(val); err != nil {
+					m.err = fmt.Sprintf("Failed to save: %v", err)
+					return m, nil
+				}
+				m.model = val
+				m.savedModel = true
+			}
+			// Skip image/voice/realtime steps for openclaw.
+			m.step = stepShell
+			return m, nil
+		}
 		var val string
 		if m.modelPickMode && len(m.availableModels) > 0 {
 			val = m.availableModels[m.modelCursor]
@@ -470,6 +508,7 @@ func (m Model) viewProvider() string {
 		"openai":    "OpenAI (GPT-4o, GPT-4, DALL-E, Whisper) or OpenAI-compatible APIs (Ollama, etc.)",
 		"anthropic": "Anthropic (Claude Sonnet, Opus, Haiku) with native tool use and extended thinking",
 		"gemini":    "Google Gemini (Gemini Pro, Flash) with native function calling",
+		"openclaw":  "OpenClaw (server-side AI agent with native tools)",
 	}
 
 	for i, name := range m.providerNames {
@@ -493,11 +532,19 @@ func (m Model) viewProvider() string {
 func (m Model) viewAPIKey() string {
 	var b strings.Builder
 
-	b.WriteString(m.stepHeader("Step 2/8", "API Key"))
-	b.WriteString("\n\n")
-	b.WriteString("Enter your API key.\n")
-	b.WriteString(dimStyle.Render("If you're using Ollama or another local provider, press Tab to skip."))
-	b.WriteString("\n\n")
+	if m.provider == "openclaw" {
+		b.WriteString(m.stepHeader("Step 2/8", "Gateway Token"))
+		b.WriteString("\n\n")
+		b.WriteString("Enter your OpenClaw Gateway token.\n")
+		b.WriteString(dimStyle.Render("Used for Bearer authentication with the OpenClaw server."))
+		b.WriteString("\n\n")
+	} else {
+		b.WriteString(m.stepHeader("Step 2/8", "API Key"))
+		b.WriteString("\n\n")
+		b.WriteString("Enter your API key.\n")
+		b.WriteString(dimStyle.Render("If you're using Ollama or another local provider, press Tab to skip."))
+		b.WriteString("\n\n")
+	}
 	b.WriteString(m.textInput.View())
 	b.WriteString("\n\n")
 	if m.err != "" {
@@ -511,11 +558,19 @@ func (m Model) viewAPIKey() string {
 func (m Model) viewBaseURL() string {
 	var b strings.Builder
 
-	b.WriteString(m.stepHeader("Step 3/8", "API Base URL"))
-	b.WriteString("\n\n")
-	b.WriteString("API endpoint URL.\n")
-	b.WriteString(dimStyle.Render("For Ollama use: http://localhost:11434/v1"))
-	b.WriteString("\n\n")
+	if m.provider == "openclaw" {
+		b.WriteString(m.stepHeader("Step 3/8", "Gateway URL"))
+		b.WriteString("\n\n")
+		b.WriteString("OpenClaw Gateway URL.\n")
+		b.WriteString(dimStyle.Render("Example: http://your-server:18789"))
+		b.WriteString("\n\n")
+	} else {
+		b.WriteString(m.stepHeader("Step 3/8", "API Base URL"))
+		b.WriteString("\n\n")
+		b.WriteString("API endpoint URL.\n")
+		b.WriteString(dimStyle.Render("For Ollama use: http://localhost:11434/v1"))
+		b.WriteString("\n\n")
+	}
 	b.WriteString(m.textInput.View())
 	b.WriteString("\n\n")
 	if m.err != "" {
@@ -528,6 +583,22 @@ func (m Model) viewBaseURL() string {
 
 func (m Model) viewModel() string {
 	var b strings.Builder
+
+	if m.provider == "openclaw" {
+		b.WriteString(m.stepHeader("Step 4/8", "Agent Name"))
+		b.WriteString("\n\n")
+		b.WriteString("Which OpenClaw agent should GPTerminal use?\n")
+		b.WriteString(dimStyle.Render("Leave empty for the default agent. Press Tab to skip."))
+		b.WriteString("\n\n")
+		b.WriteString(m.textInput.View())
+		b.WriteString("\n\n")
+		if m.err != "" {
+			b.WriteString(errorStyle.Render(m.err))
+			b.WriteString("\n\n")
+		}
+		b.WriteString(m.navHints("Enter: save", "Tab: skip", "Esc: quit"))
+		return b.String()
+	}
 
 	b.WriteString(m.stepHeader("Step 4/8", "Chat Model"))
 	b.WriteString("\n\n")

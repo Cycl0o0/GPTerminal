@@ -78,7 +78,7 @@ func runChatCommand(cmd *cobra.Command, args []string, sessionName string, force
 		}
 
 		runner := chatutil.NewRunnerWithMCP(client, sysInfo, mcpReg)
-		history, transcript := loadChatSession(sysInfo, sessionName)
+		history, transcript := loadChatSession(client, sysInfo, sessionName)
 		history = append(history, openai.ChatCompletionMessage{
 			Role:    openai.ChatMessageRoleUser,
 			Content: userMsg,
@@ -181,9 +181,12 @@ func runChatCommand(cmd *cobra.Command, args []string, sessionName string, force
 	return err
 }
 
-func loadChatSession(sysInfo system.SystemInfo, sessionName string) ([]openai.ChatCompletionMessage, []session.ChatMessage) {
-	baseHistory := []openai.ChatCompletionMessage{
-		{Role: openai.ChatMessageRoleSystem, Content: ai.ChatSystemPrompt(sysInfo.ContextBlock())},
+func loadChatSession(client *ai.Client, sysInfo system.SystemInfo, sessionName string) ([]openai.ChatCompletionMessage, []session.ChatMessage) {
+	var baseHistory []openai.ChatCompletionMessage
+	if !client.IsOpenClaw() {
+		baseHistory = []openai.ChatCompletionMessage{
+			{Role: openai.ChatMessageRoleSystem, Content: ai.ChatSystemPrompt(sysInfo.ContextBlock())},
+		}
 	}
 	if sessionName == "" {
 		return baseHistory, nil

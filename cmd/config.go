@@ -126,6 +126,20 @@ var showConfigCmd = &cobra.Command{
 		}
 		fmt.Printf("Realtime Model:     %s\n", config.RealtimeModel())
 		fmt.Printf("Realtime URL:       %s\n", config.RealtimeURL())
+		if ocURL := config.OpenClawURL(); ocURL != "" {
+			fmt.Println()
+			fmt.Printf("OpenClaw URL:       %s\n", ocURL)
+			if ocToken := config.OpenClawToken(); ocToken != "" {
+				fmt.Printf("OpenClaw Token:     %s\n", maskKey(ocToken))
+			} else if ocUser := config.OpenClawUsername(); ocUser != "" {
+				fmt.Printf("OpenClaw Auth:      password (%s)\n", ocUser)
+			} else {
+				fmt.Println("OpenClaw Auth:      (not configured)")
+			}
+			if ocAgent := config.OpenClawAgent(); ocAgent != "" {
+				fmt.Printf("OpenClaw Agent:     %s\n", ocAgent)
+			}
+		}
 		fmt.Println()
 		fmt.Printf("Config file:        %s\n", config.ConfigFile())
 
@@ -282,14 +296,14 @@ func makeSetURLCmd(use, short, key string, saveFn func(string) error) *cobra.Com
 
 var setProviderCmd = &cobra.Command{
 	Use:   "set-provider <provider>",
-	Short: "Set the AI provider (openai, anthropic, gemini)",
+	Short: "Set the AI provider (openai, anthropic, gemini, openclaw)",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		p := args[0]
 		switch p {
-		case "openai", "anthropic", "gemini":
+		case "openai", "anthropic", "gemini", "openclaw":
 		default:
-			fmt.Fprintf(os.Stderr, "Unknown provider %q. Supported: openai, anthropic, gemini\n", p)
+			fmt.Fprintf(os.Stderr, "Unknown provider %q. Supported: openai, anthropic, gemini, openclaw\n", p)
 			os.Exit(1)
 		}
 		if err := config.SaveProvider(p); err != nil {
@@ -325,6 +339,14 @@ var setGeminiKeyCmd = &cobra.Command{
 		fmt.Printf("Gemini API key saved to %s\n", config.ConfigFile())
 	},
 }
+
+var (
+	setOpenClawURLCmd      = makeSetURLCmd("set-openclaw-url <url>", "Set OpenClaw Gateway URL", "openclaw_url", config.SaveOpenClawURL)
+	setOpenClawTokenCmd    = makeSetModelCmd("set-openclaw-token <token>", "Set OpenClaw Gateway token", "openclaw_token", config.SaveOpenClawToken)
+	setOpenClawAgentCmd    = makeSetModelCmd("set-openclaw-agent <agent>", "Set OpenClaw agent name", "openclaw_agent", config.SaveOpenClawAgent)
+	setOpenClawUserCmd     = makeSetModelCmd("set-openclaw-username <user>", "Set OpenClaw username (password auth)", "openclaw_username", config.SaveOpenClawUsername)
+	setOpenClawPasswordCmd = makeSetModelCmd("set-openclaw-password <pass>", "Set OpenClaw password (password auth)", "openclaw_password", config.SaveOpenClawPassword)
+)
 
 var (
 	setS2TModelCmd    = makeSetModelCmd("set-s2t-model <model>", "Set speech-to-text model", "s2t_model", config.SaveS2TModel)
@@ -372,5 +394,11 @@ func init() {
 	configCmd.AddCommand(setT2SURLCmd)
 	configCmd.AddCommand(setImageURLCmd)
 	configCmd.AddCommand(setRealtimeURLCmd)
+	// openclaw commands
+	configCmd.AddCommand(setOpenClawURLCmd)
+	configCmd.AddCommand(setOpenClawTokenCmd)
+	configCmd.AddCommand(setOpenClawAgentCmd)
+	configCmd.AddCommand(setOpenClawUserCmd)
+	configCmd.AddCommand(setOpenClawPasswordCmd)
 	rootCmd.AddCommand(configCmd)
 }

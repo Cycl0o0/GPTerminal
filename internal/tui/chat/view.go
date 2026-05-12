@@ -198,6 +198,9 @@ func compactLine(s string) string {
 
 func (m Model) headerInfo() string {
 	parts := []string{m.sysInfo.OS}
+	if m.isOpenClaw {
+		parts = append(parts, "provider:openclaw")
+	}
 	if m.sessionName != "" {
 		parts = append(parts, "session:"+m.sessionName)
 	} else {
