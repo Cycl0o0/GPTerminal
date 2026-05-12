@@ -60,7 +60,7 @@ func (p *OpenClawProvider) ensureClient(ctx context.Context, eventCh chan<- chat
 		gateway.WithScopes(protocol.ScopeOperatorRead, protocol.ScopeOperatorWrite),
 		gateway.WithCaps(protocol.ClientCapToolEvents),
 		gateway.WithClientInfo(protocol.ClientInfo{
-			ID:       "gpterminal",
+			ID:       protocol.ClientIDCLI,
 			Version:  "2.9.0",
 			Platform: "go",
 			Mode:     protocol.ClientModeBackend,
