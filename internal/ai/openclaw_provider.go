@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -15,8 +13,6 @@ import (
 	"github.com/a3tai/openclaw-go/protocol"
 	openai "github.com/sashabaranov/go-openai"
 )
-
-var ocDebug = log.New(os.Stderr, "[openclaw-debug] ", 0)
 
 type OpenClawProvider struct {
 	baseURL string
@@ -64,9 +60,11 @@ func (p *OpenClawProvider) ensureClient(ctx context.Context, eventCh chan<- chat
 		gateway.WithScopes(protocol.ScopeOperatorRead, protocol.ScopeOperatorWrite),
 		gateway.WithCaps(protocol.ClientCapToolEvents),
 		gateway.WithOnEvent(func(ev protocol.Event) {
-			ocDebug.Printf("event: %s payload: %s", ev.EventName, string(ev.Payload))
-			if ev.EventName == protocol.EventChat {
-				eventCh <- chatEventMsg{payload: ev.Payload}
+			switch ev.EventName {
+			case protocol.EventChat:
+				eventCh <- chatEventMsg{payload: ev.Payload, eventName: "chat"}
+			case protocol.EventAgent:
+				eventCh <- chatEventMsg{payload: ev.Payload, eventName: "agent"}
 			}
 		}),
 	)
@@ -84,7 +82,8 @@ func (p *OpenClawProvider) ensureClient(ctx context.Context, eventCh chan<- chat
 }
 
 type chatEventMsg struct {
-	payload json.RawMessage
+	payload   json.RawMessage
+	eventName string
 }
 
 func (p *OpenClawProvider) CreateChatCompletion(ctx context.Context, req openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error) {
@@ -167,29 +166,34 @@ func (p *OpenClawProvider) ListModels(ctx context.Context) ([]string, error) {
 	return []string{name}, nil
 }
 
-// openClawStream reads "chat" events from the WebSocket event handler.
+// openClawStream reads "chat" and "agent" events from the WebSocket.
 type openClawStream struct {
-	eventCh  <-chan chatEventMsg
-	client   *gateway.Client
-	done     bool
-	prevText string // accumulated text from previous delta — used to compute incremental diff
+	eventCh   <-chan chatEventMsg
+	client    *gateway.Client
+	done      bool
+	prevText  string // accumulated text — used to compute incremental diff
+	seenTools int    // number of tool_use blocks already emitted
 }
 
-// chatMessage is the structure of the "message" field in chat events:
-// {"role":"assistant","content":[{"type":"text","text":"..."}],"timestamp":...}
+// contentBlock represents one block inside the message content array.
+type contentBlock struct {
+	Type  string          `json:"type"`
+	Text  string          `json:"text,omitempty"`
+	ID    string          `json:"id,omitempty"`
+	Name  string          `json:"name,omitempty"`
+	Input json.RawMessage `json:"input,omitempty"`
+}
+
+// chatMsg is the structure of the "message" field in chat events.
 type chatMsg struct {
-	Content []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	} `json:"content"`
+	Content []contentBlock `json:"content"`
 }
 
-// extractText reads the accumulated text from the message field.
+// extractText reads only the text-type content from the message field.
 func extractText(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
 	}
-	// Try structured message: {"role":...,"content":[{"type":"text","text":"..."}],...}
 	var msg chatMsg
 	if json.Unmarshal(raw, &msg) == nil && len(msg.Content) > 0 {
 		var buf strings.Builder
@@ -198,30 +202,31 @@ func extractText(raw json.RawMessage) string {
 				buf.WriteString(c.Text)
 			}
 		}
-		if buf.Len() > 0 {
-			return buf.String()
-		}
+		return buf.String()
 	}
-	// Try plain JSON string.
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
 		return s
 	}
-	// Try bare content-block array.
-	var blocks []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
-	if json.Unmarshal(raw, &blocks) == nil {
-		var buf strings.Builder
-		for _, b := range blocks {
-			if b.Type == "text" {
-				buf.WriteString(b.Text)
-			}
-		}
-		return buf.String()
-	}
 	return ""
+}
+
+// extractToolBlocks returns tool_use blocks from the message content.
+func extractToolBlocks(raw json.RawMessage) []contentBlock {
+	if len(raw) == 0 {
+		return nil
+	}
+	var msg chatMsg
+	if json.Unmarshal(raw, &msg) != nil {
+		return nil
+	}
+	var tools []contentBlock
+	for _, c := range msg.Content {
+		if c.Type == "tool_use" {
+			tools = append(tools, c)
+		}
+	}
+	return tools
 }
 
 func (s *openClawStream) Recv() (ChatStreamEvent, error) {
@@ -237,21 +242,21 @@ func (s *openClawStream) Recv() (ChatStreamEvent, error) {
 				return ChatStreamEvent{}, io.EOF
 			}
 
-			var ev protocol.ChatEvent
-			if json.Unmarshal(msg.payload, &ev) != nil {
-				// Also try map fallback for tool_use/tool_result events
-				// that may have extra fields not in ChatEvent.
-				var data map[string]any
-				if json.Unmarshal(msg.payload, &data) != nil {
+			// ── Agent events: tool calls, tool results, lifecycle ──
+			if msg.eventName == "agent" {
+				var ae protocol.AgentEvent
+				if json.Unmarshal(msg.payload, &ae) != nil {
 					continue
 				}
-				state, _ := data["state"].(string)
-				switch state {
+				switch ae.Stream {
 				case "tool_use":
-					name, _ := data["toolName"].(string)
-					args, _ := data["toolArgs"].(string)
-					if argsMap, ok := data["toolArgs"].(map[string]any); ok {
-						b, _ := json.Marshal(argsMap)
+					name, _ := ae.Data["name"].(string)
+					if name == "" {
+						name, _ = ae.Data["toolName"].(string)
+					}
+					args := ""
+					if input, ok := ae.Data["input"]; ok {
+						b, _ := json.Marshal(input)
 						args = string(b)
 					}
 					if name != "" {
@@ -260,8 +265,17 @@ func (s *openClawStream) Recv() (ChatStreamEvent, error) {
 						}, nil
 					}
 				case "tool_result":
-					name, _ := data["toolName"].(string)
-					result, _ := data["toolResult"].(string)
+					name, _ := ae.Data["name"].(string)
+					if name == "" {
+						name, _ = ae.Data["toolName"].(string)
+					}
+					result := ""
+					if r, ok := ae.Data["result"]; ok {
+						b, _ := json.Marshal(r)
+						result = string(b)
+					} else if r, ok := ae.Data["text"].(string); ok {
+						result = r
+					}
 					if name != "" {
 						return ChatStreamEvent{
 							ServerToolResult: &ServerToolEvent{Name: name, Result: result},
@@ -271,10 +285,26 @@ func (s *openClawStream) Recv() (ChatStreamEvent, error) {
 				continue
 			}
 
+			// ── Chat events: delta, final, error, aborted ──
+			var ev protocol.ChatEvent
+			if json.Unmarshal(msg.payload, &ev) != nil {
+				continue
+			}
+
 			switch ev.State {
 			case "delta":
+				// Check for tool_use content blocks in the accumulated message.
+				tools := extractToolBlocks(ev.Message)
+				if len(tools) > s.seenTools {
+					tb := tools[s.seenTools]
+					s.seenTools = len(tools)
+					args := string(tb.Input)
+					return ChatStreamEvent{
+						ServerToolCall: &ServerToolEvent{Name: tb.Name, Arguments: args},
+					}, nil
+				}
+				// Emit incremental text.
 				full := extractText(ev.Message)
-				// Emit only the new portion since last delta.
 				if len(full) > len(s.prevText) {
 					delta := full[len(s.prevText):]
 					s.prevText = full
@@ -297,34 +327,6 @@ func (s *openClawStream) Recv() (ChatStreamEvent, error) {
 			case "aborted":
 				s.done = true
 				return ChatStreamEvent{}, io.EOF
-
-			case "tool_use", "tool_result":
-				// Typed ChatEvent doesn't have tool fields — fall through to map parse.
-				var data map[string]any
-				if json.Unmarshal(msg.payload, &data) != nil {
-					continue
-				}
-				if ev.State == "tool_use" {
-					name, _ := data["toolName"].(string)
-					args, _ := data["toolArgs"].(string)
-					if argsMap, ok := data["toolArgs"].(map[string]any); ok {
-						b, _ := json.Marshal(argsMap)
-						args = string(b)
-					}
-					if name != "" {
-						return ChatStreamEvent{
-							ServerToolCall: &ServerToolEvent{Name: name, Arguments: args},
-						}, nil
-					}
-				} else {
-					name, _ := data["toolName"].(string)
-					result, _ := data["toolResult"].(string)
-					if name != "" {
-						return ChatStreamEvent{
-							ServerToolResult: &ServerToolEvent{Name: name, Result: result},
-						}, nil
-					}
-				}
 			}
 
 		case <-s.client.Done():
