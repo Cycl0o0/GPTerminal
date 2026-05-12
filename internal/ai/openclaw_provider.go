@@ -1,24 +1,26 @@
 package ai
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/a3tai/openclaw-go/gateway"
+	"github.com/a3tai/openclaw-go/protocol"
 	openai "github.com/sashabaranov/go-openai"
 )
 
 type OpenClawProvider struct {
-	baseURL    string
-	token      string
-	agent      string
-	httpClient *http.Client
+	baseURL string
+	token   string
+	agent   string
+
+	mu     sync.Mutex
+	client *gateway.Client
 }
 
 func NewOpenClawProvider(baseURL, token, agent string) *OpenClawProvider {
@@ -26,13 +28,58 @@ func NewOpenClawProvider(baseURL, token, agent string) *OpenClawProvider {
 		baseURL: strings.TrimRight(baseURL, "/"),
 		token:   token,
 		agent:   agent,
-		httpClient: &http.Client{
-			Timeout: 5 * time.Minute,
-		},
 	}
 }
 
 func (p *OpenClawProvider) Name() string { return "openclaw" }
+
+// wsURL converts http(s) base URL to ws(s) URL.
+func (p *OpenClawProvider) wsURL() string {
+	u := p.baseURL
+	u = strings.Replace(u, "https://", "wss://", 1)
+	u = strings.Replace(u, "http://", "ws://", 1)
+	if !strings.HasSuffix(u, "/ws") {
+		u += "/ws"
+	}
+	return u
+}
+
+func (p *OpenClawProvider) ensureClient(ctx context.Context, eventCh chan<- chatEventMsg) (*gateway.Client, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Close stale client.
+	if p.client != nil {
+		p.client.Close()
+		p.client = nil
+	}
+
+	client := gateway.NewClient(
+		gateway.WithPassword(p.token),
+		gateway.WithRole(protocol.RoleOperator),
+		gateway.WithScopes(protocol.ScopeOperatorRead, protocol.ScopeOperatorWrite),
+		gateway.WithOnEvent(func(ev protocol.Event) {
+			if ev.EventName == protocol.EventChat {
+				eventCh <- chatEventMsg{payload: ev.Payload}
+			}
+		}),
+	)
+
+	connectCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	if err := client.Connect(connectCtx, p.wsURL()); err != nil {
+		client.Close()
+		return nil, fmt.Errorf("openclaw: connect: %w", err)
+	}
+
+	p.client = client
+	return client, nil
+}
+
+type chatEventMsg struct {
+	payload json.RawMessage
+}
 
 func (p *OpenClawProvider) CreateChatCompletion(ctx context.Context, req openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error) {
 	stream, err := p.CreateChatCompletionStream(ctx, req)
@@ -66,7 +113,7 @@ func (p *OpenClawProvider) CreateChatCompletion(ctx context.Context, req openai.
 }
 
 func (p *OpenClawProvider) CreateChatCompletionStream(ctx context.Context, req openai.ChatCompletionRequest) (ChatStream, error) {
-	// Only send the latest user message — OpenClaw manages its own history.
+	// Only send the latest user message.
 	var userContent string
 	for i := len(req.Messages) - 1; i >= 0; i-- {
 		if req.Messages[i].Role == openai.ChatMessageRoleUser {
@@ -75,50 +122,34 @@ func (p *OpenClawProvider) CreateChatCompletionStream(ctx context.Context, req o
 		}
 	}
 	if userContent == "" {
-		return nil, fmt.Errorf("openclaw: no user message found in request")
+		return nil, fmt.Errorf("openclaw: no user message found")
 	}
 
-	// OpenResponses API: POST /v1/responses
-	model := "openclaw"
+	eventCh := make(chan chatEventMsg, 64)
+
+	client, err := p.ensureClient(ctx, eventCh)
+	if err != nil {
+		return nil, err
+	}
+
+	sessionKey := "gpterminal"
 	if p.agent != "" {
-		model = "openclaw/" + p.agent
+		sessionKey = "agent:" + p.agent + ":gpterminal"
 	}
 
-	body := map[string]any{
-		"model":  model,
-		"input":  userContent,
-		"stream": true,
-	}
-
-	jsonBody, err := json.Marshal(body)
+	_, err = client.ChatSend(ctx, protocol.ChatSendParams{
+		SessionKey:     sessionKey,
+		Message:        userContent,
+		IdempotencyKey: fmt.Sprintf("gpt-%d", time.Now().UnixNano()),
+	})
 	if err != nil {
-		return nil, fmt.Errorf("openclaw: marshal request: %w", err)
-	}
-
-	url := p.baseURL + "/v1/responses"
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
-	if err != nil {
-		return nil, fmt.Errorf("openclaw: create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "text/event-stream")
-	if p.token != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.token)
-	}
-
-	resp, err := p.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("openclaw: request failed: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		defer resp.Body.Close()
-		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return nil, fmt.Errorf("openclaw: HTTP %d: %s", resp.StatusCode, string(errBody))
+		return nil, fmt.Errorf("openclaw: chat.send: %w", err)
 	}
 
 	return &openClawStream{
-		reader: bufio.NewReader(resp.Body),
-		body:   resp.Body,
+		eventCh: eventCh,
+		client:  client,
+		done:    false,
 	}, nil
 }
 
@@ -130,11 +161,11 @@ func (p *OpenClawProvider) ListModels(ctx context.Context) ([]string, error) {
 	return []string{name}, nil
 }
 
-// openClawStream reads SSE events from the OpenClaw Gateway OpenResponses API.
+// openClawStream reads "chat" events from the WebSocket event handler.
 type openClawStream struct {
-	reader *bufio.Reader
-	body   io.ReadCloser
-	done   bool
+	eventCh <-chan chatEventMsg
+	client  *gateway.Client
+	done    bool
 }
 
 func (s *openClawStream) Recv() (ChatStreamEvent, error) {
@@ -143,84 +174,75 @@ func (s *openClawStream) Recv() (ChatStreamEvent, error) {
 	}
 
 	for {
-		eventType, data, err := s.readSSEEvent()
-		if err != nil {
-			s.done = true
-			if err == io.EOF {
+		select {
+		case msg, ok := <-s.eventCh:
+			if !ok {
+				s.done = true
 				return ChatStreamEvent{}, io.EOF
 			}
-			return ChatStreamEvent{}, fmt.Errorf("openclaw: SSE read: %w", err)
-		}
 
-		evt, ok := s.mapEvent(eventType, data)
-		if ok {
-			return evt, nil
+			var data map[string]any
+			if json.Unmarshal(msg.payload, &data) != nil {
+				continue
+			}
+
+			state, _ := data["state"].(string)
+
+			switch state {
+			case "delta":
+				text, _ := data["message"].(string)
+				if text != "" {
+					return ChatStreamEvent{Content: text}, nil
+				}
+
+			case "final":
+				s.done = true
+				// Check if final has remaining text.
+				text, _ := data["message"].(string)
+				if text != "" {
+					return ChatStreamEvent{Content: text}, nil
+				}
+				return ChatStreamEvent{}, io.EOF
+
+			case "error":
+				s.done = true
+				errMsg, _ := data["errorMessage"].(string)
+				return ChatStreamEvent{}, fmt.Errorf("openclaw: agent error: %s", errMsg)
+
+			case "aborted":
+				s.done = true
+				return ChatStreamEvent{}, io.EOF
+
+			case "tool_use":
+				name, _ := data["toolName"].(string)
+				args, _ := data["toolArgs"].(string)
+				if argsMap, ok := data["toolArgs"].(map[string]any); ok {
+					b, _ := json.Marshal(argsMap)
+					args = string(b)
+				}
+				if name != "" {
+					return ChatStreamEvent{
+						ServerToolCall: &ServerToolEvent{Name: name, Arguments: args},
+					}, nil
+				}
+
+			case "tool_result":
+				name, _ := data["toolName"].(string)
+				result, _ := data["toolResult"].(string)
+				if name != "" {
+					return ChatStreamEvent{
+						ServerToolResult: &ServerToolEvent{Name: name, Result: result},
+					}, nil
+				}
+			}
+
+		case <-s.client.Done():
+			s.done = true
+			return ChatStreamEvent{}, io.EOF
 		}
 	}
 }
 
 func (s *openClawStream) Close() {
 	s.done = true
-	if s.body != nil {
-		s.body.Close()
-	}
-}
-
-// readSSEEvent reads one SSE event block from the stream.
-func (s *openClawStream) readSSEEvent() (eventType string, data string, err error) {
-	var dataLines []string
-
-	for {
-		line, readErr := s.reader.ReadString('\n')
-		line = strings.TrimRight(line, "\r\n")
-
-		if line == "" {
-			if len(dataLines) > 0 || eventType != "" {
-				return eventType, strings.Join(dataLines, "\n"), nil
-			}
-			if readErr != nil {
-				return "", "", readErr
-			}
-			continue
-		}
-
-		if strings.HasPrefix(line, "event:") {
-			eventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-		} else if strings.HasPrefix(line, "data:") {
-			d := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			if d == "[DONE]" {
-				s.done = true
-				return "", "", io.EOF
-			}
-			dataLines = append(dataLines, d)
-		}
-
-		if readErr != nil {
-			if len(dataLines) > 0 || eventType != "" {
-				return eventType, strings.Join(dataLines, "\n"), nil
-			}
-			return "", "", readErr
-		}
-	}
-}
-
-// mapEvent converts an OpenResponses SSE event into a ChatStreamEvent.
-func (s *openClawStream) mapEvent(eventType, data string) (ChatStreamEvent, bool) {
-	switch eventType {
-	case "response.output_text.delta":
-		var delta struct {
-			Delta string `json:"delta"`
-		}
-		if json.Unmarshal([]byte(data), &delta) == nil && delta.Delta != "" {
-			return ChatStreamEvent{Content: delta.Delta}, true
-		}
-		return ChatStreamEvent{}, false
-
-	case "response.completed":
-		s.done = true
-		return ChatStreamEvent{}, false
-
-	default:
-		return ChatStreamEvent{}, false
-	}
 }
