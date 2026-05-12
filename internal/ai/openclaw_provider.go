@@ -163,24 +163,45 @@ func (p *OpenClawProvider) ListModels(ctx context.Context) ([]string, error) {
 
 // openClawStream reads "chat" events from the WebSocket event handler.
 type openClawStream struct {
-	eventCh <-chan chatEventMsg
-	client  *gateway.Client
-	done    bool
+	eventCh  <-chan chatEventMsg
+	client   *gateway.Client
+	done     bool
+	prevText string // accumulated text from previous delta — used to compute incremental diff
 }
 
-// extractText tries to read the message field from a ChatEvent payload.
-// The "message" field is json.RawMessage — it may be a plain JSON string,
-// a structured content-block array, or absent entirely.
+// chatMessage is the structure of the "message" field in chat events:
+// {"role":"assistant","content":[{"type":"text","text":"..."}],"timestamp":...}
+type chatMsg struct {
+	Content []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"content"`
+}
+
+// extractText reads the accumulated text from the message field.
 func extractText(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
 	}
-	// Fast path: JSON string (most common for delta/final).
+	// Try structured message: {"role":...,"content":[{"type":"text","text":"..."}],...}
+	var msg chatMsg
+	if json.Unmarshal(raw, &msg) == nil && len(msg.Content) > 0 {
+		var buf strings.Builder
+		for _, c := range msg.Content {
+			if c.Type == "text" {
+				buf.WriteString(c.Text)
+			}
+		}
+		if buf.Len() > 0 {
+			return buf.String()
+		}
+	}
+	// Try plain JSON string.
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
 		return s
 	}
-	// Fallback: array of content blocks [{type:"text",text:"..."},...].
+	// Try bare content-block array.
 	var blocks []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
@@ -194,8 +215,7 @@ func extractText(raw json.RawMessage) string {
 		}
 		return buf.String()
 	}
-	// Last resort: stringify whatever it is.
-	return string(raw)
+	return ""
 }
 
 func (s *openClawStream) Recv() (ChatStreamEvent, error) {
@@ -247,16 +267,20 @@ func (s *openClawStream) Recv() (ChatStreamEvent, error) {
 
 			switch ev.State {
 			case "delta":
-				text := extractText(ev.Message)
-				if text != "" {
-					return ChatStreamEvent{Content: text}, nil
+				full := extractText(ev.Message)
+				// Emit only the new portion since last delta.
+				if len(full) > len(s.prevText) {
+					delta := full[len(s.prevText):]
+					s.prevText = full
+					return ChatStreamEvent{Content: delta}, nil
 				}
 
 			case "final":
 				s.done = true
-				text := extractText(ev.Message)
-				if text != "" {
-					return ChatStreamEvent{Content: text}, nil
+				full := extractText(ev.Message)
+				if len(full) > len(s.prevText) {
+					delta := full[len(s.prevText):]
+					return ChatStreamEvent{Content: delta}, nil
 				}
 				return ChatStreamEvent{}, io.EOF
 
