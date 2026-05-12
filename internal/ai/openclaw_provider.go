@@ -63,7 +63,7 @@ func (p *OpenClawProvider) ensureClient(ctx context.Context, eventCh chan<- chat
 			ID:       protocol.ClientIDWebchat,
 			Version:  "2.9.0",
 			Platform: "go",
-			Mode:     protocol.ClientModeBackend,
+			Mode:     protocol.ClientModeWebchat,
 		}),
 		gateway.WithOnEvent(func(ev protocol.Event) {
 			if ev.EventName == protocol.EventChat {
