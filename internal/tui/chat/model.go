@@ -102,8 +102,10 @@ func NewModel(client *ai.Client, sysInfo system.SystemInfo, opts Options) Model 
 	if len(loadedHistory) > 0 {
 		if loadedHistory[0].Role == openai.ChatMessageRoleSystem {
 			m.history = loadedHistory
-		} else {
+		} else if len(m.history) > 0 {
 			m.history = append(m.history[:1], loadedHistory...)
+		} else {
+			m.history = loadedHistory
 		}
 		m.msgCount = len(m.messages)
 	}

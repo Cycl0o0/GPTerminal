@@ -110,9 +110,8 @@ gpterminal config set-model gemini-2.0-flash
 gpterminal config set-provider openclaw
 gpterminal config set-openclaw-url http://your-server:18789
 gpterminal config set-openclaw-token YOUR_TOKEN
-# Or use password auth instead of token:
-gpterminal config set-openclaw-username YOUR_USER
-gpterminal config set-openclaw-password YOUR_PASS
+# Or use shared-password auth instead of token:
+gpterminal config set-openclaw-password YOUR_PASSWORD
 # Optionally set an agent name:
 gpterminal config set-openclaw-agent my-agent
 ```
@@ -582,8 +581,7 @@ Config is stored at `~/.config/gpterminal/config.yaml`.
 | `openclaw_url` | - | `OPENCLAW_URL` | OpenClaw Gateway URL |
 | `openclaw_token` | - | `OPENCLAW_TOKEN` | OpenClaw Bearer token |
 | `openclaw_agent` | - | `OPENCLAW_AGENT` | OpenClaw agent name |
-| `openclaw_username` | - | `OPENCLAW_USERNAME` | OpenClaw username (password auth) |
-| `openclaw_password` | - | `OPENCLAW_PASSWORD` | OpenClaw password (password auth) |
+| `openclaw_password` | - | `OPENCLAW_PASSWORD` | OpenClaw shared password (Bearer auth fallback) |
 | `mcp_servers` | - | - | MCP server configurations (see MCP Support) |
 
 ## Author

@@ -17,8 +17,6 @@ import (
 type OpenClawProvider struct {
 	baseURL    string
 	token      string
-	username   string
-	password   string
 	agent      string
 	httpClient *http.Client
 	sessionID  string
@@ -34,68 +32,6 @@ func NewOpenClawProvider(baseURL, token, agent string) *OpenClawProvider {
 		},
 		sessionID: "default",
 	}
-}
-
-func NewOpenClawProviderWithPassword(baseURL, username, password, agent string) *OpenClawProvider {
-	return &OpenClawProvider{
-		baseURL:  strings.TrimRight(baseURL, "/"),
-		username: username,
-		password: password,
-		agent:    agent,
-		httpClient: &http.Client{
-			Timeout: 5 * time.Minute,
-		},
-		sessionID: "default",
-	}
-}
-
-// login exchanges username/password for a Bearer token via the auth endpoint.
-func (p *OpenClawProvider) login() error {
-	body, _ := json.Marshal(map[string]string{
-		"username": p.username,
-		"password": p.password,
-	})
-	resp, err := p.httpClient.Post(
-		p.baseURL+"/api/auth/login",
-		"application/json",
-		bytes.NewReader(body),
-	)
-	if err != nil {
-		return fmt.Errorf("openclaw login: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("openclaw login: HTTP %d: %s", resp.StatusCode, string(errBody))
-	}
-
-	var result struct {
-		Token       string `json:"token"`
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("openclaw login: decode response: %w", err)
-	}
-	p.token = result.Token
-	if p.token == "" {
-		p.token = result.AccessToken
-	}
-	if p.token == "" {
-		return fmt.Errorf("openclaw login: no token in response")
-	}
-	return nil
-}
-
-// ensureToken logs in with password if no token is present.
-func (p *OpenClawProvider) ensureToken() error {
-	if p.token != "" {
-		return nil
-	}
-	if p.username == "" || p.password == "" {
-		return fmt.Errorf("openclaw: no token or username/password configured")
-	}
-	return p.login()
 }
 
 func (p *OpenClawProvider) Name() string { return "openclaw" }
@@ -132,10 +68,6 @@ func (p *OpenClawProvider) CreateChatCompletion(ctx context.Context, req openai.
 }
 
 func (p *OpenClawProvider) CreateChatCompletionStream(ctx context.Context, req openai.ChatCompletionRequest) (ChatStream, error) {
-	if err := p.ensureToken(); err != nil {
-		return nil, err
-	}
-
 	// Only send the latest user message — OpenClaw manages its own history.
 	var userContent string
 	for i := len(req.Messages) - 1; i >= 0; i-- {

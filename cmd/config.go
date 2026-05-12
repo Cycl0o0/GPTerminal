@@ -131,8 +131,8 @@ var showConfigCmd = &cobra.Command{
 			fmt.Printf("OpenClaw URL:       %s\n", ocURL)
 			if ocToken := config.OpenClawToken(); ocToken != "" {
 				fmt.Printf("OpenClaw Token:     %s\n", maskKey(ocToken))
-			} else if ocUser := config.OpenClawUsername(); ocUser != "" {
-				fmt.Printf("OpenClaw Auth:      password (%s)\n", ocUser)
+			} else if config.OpenClawPassword() != "" {
+				fmt.Printf("OpenClaw Auth:      password (configured)\n")
 			} else {
 				fmt.Println("OpenClaw Auth:      (not configured)")
 			}
@@ -344,8 +344,7 @@ var (
 	setOpenClawURLCmd      = makeSetURLCmd("set-openclaw-url <url>", "Set OpenClaw Gateway URL", "openclaw_url", config.SaveOpenClawURL)
 	setOpenClawTokenCmd    = makeSetModelCmd("set-openclaw-token <token>", "Set OpenClaw Gateway token", "openclaw_token", config.SaveOpenClawToken)
 	setOpenClawAgentCmd    = makeSetModelCmd("set-openclaw-agent <agent>", "Set OpenClaw agent name", "openclaw_agent", config.SaveOpenClawAgent)
-	setOpenClawUserCmd     = makeSetModelCmd("set-openclaw-username <user>", "Set OpenClaw username (password auth)", "openclaw_username", config.SaveOpenClawUsername)
-	setOpenClawPasswordCmd = makeSetModelCmd("set-openclaw-password <pass>", "Set OpenClaw password (password auth)", "openclaw_password", config.SaveOpenClawPassword)
+	setOpenClawPasswordCmd = makeSetModelCmd("set-openclaw-password <pass>", "Set OpenClaw password (shared-secret auth)", "openclaw_password", config.SaveOpenClawPassword)
 )
 
 var (
@@ -398,7 +397,6 @@ func init() {
 	configCmd.AddCommand(setOpenClawURLCmd)
 	configCmd.AddCommand(setOpenClawTokenCmd)
 	configCmd.AddCommand(setOpenClawAgentCmd)
-	configCmd.AddCommand(setOpenClawUserCmd)
 	configCmd.AddCommand(setOpenClawPasswordCmd)
 	rootCmd.AddCommand(configCmd)
 }

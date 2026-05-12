@@ -56,7 +56,6 @@ func Init() {
 	viper.BindEnv("openclaw_url", "OPENCLAW_URL")
 	viper.BindEnv("openclaw_token", "OPENCLAW_TOKEN")
 	viper.BindEnv("openclaw_agent", "OPENCLAW_AGENT")
-	viper.BindEnv("openclaw_username", "OPENCLAW_USERNAME")
 	viper.BindEnv("openclaw_password", "OPENCLAW_PASSWORD")
 
 	_ = viper.ReadInConfig()
@@ -194,8 +193,7 @@ func GeminiAPIKey() string {
 func OpenClawURL() string      { return viper.GetString("openclaw_url") }
 func OpenClawToken() string    { return viper.GetString("openclaw_token") }
 func OpenClawAgent() string    { return viper.GetString("openclaw_agent") }
-func OpenClawUsername() string  { return viper.GetString("openclaw_username") }
-func OpenClawPassword() string  { return viper.GetString("openclaw_password") }
+func OpenClawPassword() string { return viper.GetString("openclaw_password") }
 
 func MCPServers() map[string]interface{} {
 	return viper.GetStringMap("mcp_servers")
@@ -233,5 +231,4 @@ func SaveRealtimeModel(model string) error { return saveValue("realtime_model", 
 func SaveOpenClawURL(url string) error        { return saveValue("openclaw_url", url) }
 func SaveOpenClawToken(token string) error    { return saveValue("openclaw_token", token) }
 func SaveOpenClawAgent(agent string) error    { return saveValue("openclaw_agent", agent) }
-func SaveOpenClawUsername(user string) error   { return saveValue("openclaw_username", user) }
-func SaveOpenClawPassword(pass string) error   { return saveValue("openclaw_password", pass) }
+func SaveOpenClawPassword(pass string) error { return saveValue("openclaw_password", pass) }

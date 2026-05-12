@@ -31,19 +31,16 @@ func NewClientWithBaseURL(baseURL string) (*Client, error) {
 		if ocURL == "" {
 			return nil, fmt.Errorf("OpenClaw URL not set. Run: gpterminal config set-openclaw-url <url>\nOr set OPENCLAW_URL environment variable")
 		}
-		ocToken := config.OpenClawToken()
-		ocAgent := config.OpenClawAgent()
-		if ocToken != "" {
-			op := NewOpenClawProvider(ocURL, ocToken, ocAgent)
-			return &Client{provider: op}, nil
+		// Both token and password use the same Bearer header in OpenClaw.
+		secret := config.OpenClawToken()
+		if secret == "" {
+			secret = config.OpenClawPassword()
 		}
-		ocUser := config.OpenClawUsername()
-		ocPass := config.OpenClawPassword()
-		if ocUser != "" && ocPass != "" {
-			op := NewOpenClawProviderWithPassword(ocURL, ocUser, ocPass, ocAgent)
-			return &Client{provider: op}, nil
+		if secret == "" {
+			return nil, fmt.Errorf("OpenClaw auth not configured. Set OPENCLAW_TOKEN or OPENCLAW_PASSWORD\nRun: gpterminal config set-openclaw-token <token>")
 		}
-		return nil, fmt.Errorf("OpenClaw auth not configured. Set OPENCLAW_TOKEN or OPENCLAW_USERNAME + OPENCLAW_PASSWORD\nRun: gpterminal config set-openclaw-token <token>")
+		op := NewOpenClawProvider(ocURL, secret, config.OpenClawAgent())
+		return &Client{provider: op}, nil
 
 	case "anthropic":
 		key := config.AnthropicAPIKey()
