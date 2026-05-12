@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +15,8 @@ import (
 	"github.com/a3tai/openclaw-go/protocol"
 	openai "github.com/sashabaranov/go-openai"
 )
+
+var ocDebug = log.New(os.Stderr, "[openclaw-debug] ", 0)
 
 type OpenClawProvider struct {
 	baseURL string
@@ -60,6 +64,7 @@ func (p *OpenClawProvider) ensureClient(ctx context.Context, eventCh chan<- chat
 		gateway.WithScopes(protocol.ScopeOperatorRead, protocol.ScopeOperatorWrite),
 		gateway.WithCaps(protocol.ClientCapToolEvents),
 		gateway.WithOnEvent(func(ev protocol.Event) {
+			ocDebug.Printf("event: %s payload: %s", ev.EventName, string(ev.Payload))
 			if ev.EventName == protocol.EventChat {
 				eventCh <- chatEventMsg{payload: ev.Payload}
 			}
@@ -133,9 +138,9 @@ func (p *OpenClawProvider) CreateChatCompletionStream(ctx context.Context, req o
 		return nil, err
 	}
 
-	sessionKey := "gpterminal"
+	sessionKey := fmt.Sprintf("gpterminal-%d", time.Now().UnixMilli())
 	if p.agent != "" {
-		sessionKey = "agent:" + p.agent + ":gpterminal"
+		sessionKey = fmt.Sprintf("agent:%s:gpterminal-%d", p.agent, time.Now().UnixMilli())
 	}
 
 	_, err = client.ChatSend(ctx, protocol.ChatSendParams{
