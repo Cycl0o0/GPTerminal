@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +14,19 @@ import (
 	"github.com/a3tai/openclaw-go/protocol"
 	openai "github.com/sashabaranov/go-openai"
 )
+
+var ocDebugFile *os.File
+
+func init() {
+	ocDebugFile, _ = os.OpenFile("/tmp/openclaw-events.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+}
+
+func ocLog(format string, args ...any) {
+	if ocDebugFile != nil {
+		fmt.Fprintf(ocDebugFile, format+"\n", args...)
+		ocDebugFile.Sync()
+	}
+}
 
 type OpenClawProvider struct {
 	baseURL string
@@ -60,6 +74,7 @@ func (p *OpenClawProvider) ensureClient(ctx context.Context, eventCh chan<- chat
 		gateway.WithScopes(protocol.ScopeOperatorRead, protocol.ScopeOperatorWrite),
 		gateway.WithCaps(protocol.ClientCapToolEvents),
 		gateway.WithOnEvent(func(ev protocol.Event) {
+			ocLog("[%s] %s", ev.EventName, string(ev.Payload))
 			switch ev.EventName {
 			case protocol.EventChat:
 				eventCh <- chatEventMsg{payload: ev.Payload, eventName: "chat"}
