@@ -15,19 +15,34 @@ import (
 )
 
 type OpenClawProvider struct {
-	baseURL string
-	token   string
-	agent   string
+	baseURL    string
+	token      string
+	agent      string
+	sessionKey string
 
 	mu     sync.Mutex
 	client *gateway.Client
 }
 
 func NewOpenClawProvider(baseURL, token, agent string) *OpenClawProvider {
+	sk := fmt.Sprintf("gpterminal-%d", time.Now().UnixMilli())
+	if agent != "" {
+		sk = fmt.Sprintf("agent:%s:gpterminal-%d", agent, time.Now().UnixMilli())
+	}
 	return &OpenClawProvider{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		token:   token,
-		agent:   agent,
+		baseURL:    strings.TrimRight(baseURL, "/"),
+		token:      token,
+		agent:      agent,
+		sessionKey: sk,
+	}
+}
+
+// ResetSession creates a new session key (used on "new chat").
+func (p *OpenClawProvider) ResetSession() {
+	if p.agent != "" {
+		p.sessionKey = fmt.Sprintf("agent:%s:gpterminal-%d", p.agent, time.Now().UnixMilli())
+	} else {
+		p.sessionKey = fmt.Sprintf("gpterminal-%d", time.Now().UnixMilli())
 	}
 }
 
@@ -137,13 +152,8 @@ func (p *OpenClawProvider) CreateChatCompletionStream(ctx context.Context, req o
 		return nil, err
 	}
 
-	sessionKey := fmt.Sprintf("gpterminal-%d", time.Now().UnixMilli())
-	if p.agent != "" {
-		sessionKey = fmt.Sprintf("agent:%s:gpterminal-%d", p.agent, time.Now().UnixMilli())
-	}
-
 	_, err = client.ChatSend(ctx, protocol.ChatSendParams{
-		SessionKey:     sessionKey,
+		SessionKey:     p.sessionKey,
 		Message:        userContent,
 		IdempotencyKey: fmt.Sprintf("gpt-%d", time.Now().UnixNano()),
 	})
