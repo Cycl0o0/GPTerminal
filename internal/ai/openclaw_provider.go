@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -14,19 +13,6 @@ import (
 	"github.com/a3tai/openclaw-go/protocol"
 	openai "github.com/sashabaranov/go-openai"
 )
-
-var ocDebugFile *os.File
-
-func init() {
-	ocDebugFile, _ = os.OpenFile("/tmp/openclaw-events.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-}
-
-func ocLog(format string, args ...any) {
-	if ocDebugFile != nil {
-		fmt.Fprintf(ocDebugFile, format+"\n", args...)
-		ocDebugFile.Sync()
-	}
-}
 
 type OpenClawProvider struct {
 	baseURL string
@@ -74,7 +60,6 @@ func (p *OpenClawProvider) ensureClient(ctx context.Context, eventCh chan<- chat
 		gateway.WithScopes(protocol.ScopeOperatorRead, protocol.ScopeOperatorWrite),
 		gateway.WithCaps(protocol.ClientCapToolEvents),
 		gateway.WithOnEvent(func(ev protocol.Event) {
-			ocLog("[%s] %s", ev.EventName, string(ev.Payload))
 			switch ev.EventName {
 			case protocol.EventChat:
 				eventCh <- chatEventMsg{payload: ev.Payload, eventName: "chat"}
@@ -263,38 +248,32 @@ func (s *openClawStream) Recv() (ChatStreamEvent, error) {
 				if json.Unmarshal(msg.payload, &ae) != nil {
 					continue
 				}
-				switch ae.Stream {
-				case "tool_use":
+				if ae.Stream == "tool" {
+					phase, _ := ae.Data["phase"].(string)
 					name, _ := ae.Data["name"].(string)
-					if name == "" {
-						name, _ = ae.Data["toolName"].(string)
-					}
-					args := ""
-					if input, ok := ae.Data["input"]; ok {
-						b, _ := json.Marshal(input)
-						args = string(b)
-					}
-					if name != "" {
-						return ChatStreamEvent{
-							ServerToolCall: &ServerToolEvent{Name: name, Arguments: args},
-						}, nil
-					}
-				case "tool_result":
-					name, _ := ae.Data["name"].(string)
-					if name == "" {
-						name, _ = ae.Data["toolName"].(string)
-					}
-					result := ""
-					if r, ok := ae.Data["result"]; ok {
-						b, _ := json.Marshal(r)
-						result = string(b)
-					} else if r, ok := ae.Data["text"].(string); ok {
-						result = r
-					}
-					if name != "" {
-						return ChatStreamEvent{
-							ServerToolResult: &ServerToolEvent{Name: name, Result: result},
-						}, nil
+					switch phase {
+					case "start":
+						args := ""
+						if a, ok := ae.Data["args"]; ok {
+							b, _ := json.Marshal(a)
+							args = string(b)
+						}
+						if name != "" {
+							return ChatStreamEvent{
+								ServerToolCall: &ServerToolEvent{Name: name, Arguments: args},
+							}, nil
+						}
+					case "result":
+						result := ""
+						if r, ok := ae.Data["result"]; ok {
+							b, _ := json.Marshal(r)
+							result = string(b)
+						}
+						if name != "" {
+							return ChatStreamEvent{
+								ServerToolResult: &ServerToolEvent{Name: name, Result: result},
+							}, nil
+						}
 					}
 				}
 				continue
