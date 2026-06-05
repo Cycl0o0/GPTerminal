@@ -68,6 +68,17 @@ func NewClientWithBaseURL(baseURL string) (*Client, error) {
 	}
 }
 
+// NewClientWithProvider builds a Client around an explicit Provider. It performs
+// no config lookups or network access, which makes it the injection point for
+// tests (pass a fake Provider) and for callers that already hold a provider.
+func NewClientWithProvider(p Provider) *Client {
+	c := &Client{provider: p}
+	if op, ok := p.(*OpenAIProvider); ok {
+		c.openaiProv = op
+	}
+	return c
+}
+
 func (c *Client) ProviderName() string {
 	return c.provider.Name()
 }
@@ -82,7 +93,7 @@ func (c *Client) Complete(ctx context.Context, messages []openai.ChatCompletionM
 	}
 
 	model := config.Model()
-	resp, err := c.provider.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
+	resp, err := c.sendChat(ctx, openai.ChatCompletionRequest{
 		Model:       model,
 		Messages:    messages,
 		Temperature: config.Temperature(),
@@ -106,7 +117,7 @@ func (c *Client) CreateChatCompletion(ctx context.Context, req openai.ChatComple
 		return openai.ChatCompletionResponse{}, err
 	}
 
-	resp, err := c.provider.CreateChatCompletion(ctx, req)
+	resp, err := c.sendChat(ctx, req)
 	if err != nil {
 		return openai.ChatCompletionResponse{}, &gperr.APIError{Op: "complete", Message: "API error", Err: err}
 	}
@@ -120,7 +131,7 @@ func (c *Client) CreateChatCompletionStream(ctx context.Context, req openai.Chat
 		return nil, err
 	}
 
-	stream, err := c.provider.CreateChatCompletionStream(ctx, req)
+	stream, err := c.sendChatStream(ctx, req)
 	if err != nil {
 		return nil, &gperr.APIError{Op: "stream", Message: "stream error", Err: err}
 	}
@@ -141,7 +152,7 @@ func (c *Client) StreamComplete(ctx context.Context, messages []openai.ChatCompl
 	}
 
 	model := config.Model()
-	stream, err := c.provider.CreateChatCompletionStream(ctx, openai.ChatCompletionRequest{
+	stream, err := c.sendChatStream(ctx, openai.ChatCompletionRequest{
 		Model:       model,
 		Messages:    messages,
 		Temperature: config.Temperature(),
@@ -213,7 +224,7 @@ func (c *Client) CompleteVision(ctx context.Context, systemPrompt, question, bas
 		},
 	}
 
-	resp, err := c.provider.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
+	resp, err := c.sendChat(ctx, openai.ChatCompletionRequest{
 		Model:       model,
 		Messages:    messages,
 		Temperature: config.Temperature(),

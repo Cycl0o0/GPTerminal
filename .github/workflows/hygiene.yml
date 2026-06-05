@@ -1,0 +1,55 @@
+name: Hygiene
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  no-binaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fail if any tracked file is a binary executable / large build artifact.
+      # Catches the historical mistake of committing the compiled GPTerminal binary.
+      - name: Reject committed binaries
+        run: |
+          set -euo pipefail
+          bad=0
+          while IFS= read -r f; do
+            [ -f "$f" ] || continue
+            case "$f" in
+              # known-good binary asset types stay allowed
+              *.png|*.jpg|*.jpeg|*.gif|*.ico|*.pdf|*.woff|*.woff2|*.ttf) continue ;;
+            esac
+            mime=$(file --mime-type -b "$f" || echo "")
+            size=$(wc -c < "$f")
+            if printf '%s' "$mime" | grep -qiE 'application/x-(executable|sharedlib|mach-binary|pie-executable)|application/x-dosexec'; then
+              echo "::error file=$f::tracked binary executable ($mime)"
+              bad=1
+            elif [ "$size" -gt 5242880 ]; then
+              echo "::error file=$f::tracked file larger than 5MB ($size bytes)"
+              bad=1
+            fi
+          done < <(git ls-files)
+          if [ "$bad" -ne 0 ]; then
+            echo "Committed binaries/large artifacts detected. Remove them and rely on the release workflow."
+            exit 1
+          fi
+          echo "No committed binaries found."
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan for secrets (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"

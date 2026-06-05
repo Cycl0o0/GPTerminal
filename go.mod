@@ -3,6 +3,7 @@ module github.com/cycl0o0/GPTerminal
 go 1.26.1
 
 require (
+	github.com/a3tai/openclaw-go v1.20260325.0
 	github.com/anthropics/anthropic-sdk-go v1.38.0
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
@@ -15,6 +16,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/net v0.53.0
 	google.golang.org/api v0.277.0
+	mvdan.cc/sh/v3 v3.13.1
 )
 
 require (
@@ -24,7 +26,6 @@ require (
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	cloud.google.com/go/longrunning v0.5.7 // indirect
-	github.com/a3tai/openclaw-go v1.20260325.0 // indirect
 	github.com/alecthomas/chroma/v2 v2.20.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect

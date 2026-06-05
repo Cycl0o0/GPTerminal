@@ -1,5 +1,9 @@
-# Binary
+# Binaries / build artifacts
+GPTerminal
 gpterminal
+dist/
+*.exe
+*.test
 
 # IDE
 .idea/
@@ -14,6 +18,9 @@ Thumbs.db
 
 # Config with secrets
 config.yaml
+.env
+.env.*
+!.env.example
 
 # Chat history
 chat_history.json
@@ -29,6 +36,9 @@ vendor/
 
 # Code review
 .code-review-graph/
+
+# Local agent/plugin caches
+.claude/council-cache/
 
 # AI agent instructions
 CLAUDE.md

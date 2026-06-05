@@ -42,6 +42,11 @@ func NewClient(name string, cfg ServerConfig) *Client {
 }
 
 func (c *Client) Start() error {
+	// Enforce the MCP allowlist before spawning any server (INSTRUCTIONS.md §5).
+	if err := checkAllowed(c.config.Command); err != nil {
+		return &gperr.MCPError{Server: c.name, Op: "start", Err: err}
+	}
+
 	c.cmd = exec.Command(c.config.Command, c.config.Args...)
 	c.cmd.Stderr = os.Stderr
 

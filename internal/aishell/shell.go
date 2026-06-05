@@ -3,7 +3,9 @@ package aishell
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -12,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/cycl0o0/GPTerminal/internal/ai"
+	"github.com/cycl0o0/GPTerminal/internal/execution"
 	"github.com/cycl0o0/GPTerminal/internal/risk"
 	"github.com/cycl0o0/GPTerminal/internal/system"
 	openai "github.com/sashabaranov/go-openai"
@@ -78,7 +81,7 @@ func Run(ctx context.Context) error {
 			}
 			generated := handleVibeGenerate(ctx, client, sysInfo, query, cwd)
 			if generated != "" {
-				exitCode, output := executeInShell(generated, cwd, shell)
+				exitCode, output := executeInShell(ctx, generated, cwd, shell, true, reader)
 				history = appendHistory(history, generated, exitCode, output)
 				if exitCode != 0 {
 					offerFix(ctx, client, sysInfo, generated, output, cwd, shell, reader, &history)
@@ -87,7 +90,7 @@ func Run(ctx context.Context) error {
 			continue
 		}
 
-		exitCode, output := executeInShell(input, cwd, shell)
+		exitCode, output := executeInShell(ctx, input, cwd, shell, false, reader)
 		history = appendHistory(history, input, exitCode, output)
 
 		if exitCode != 0 {
@@ -175,32 +178,68 @@ func handleBuiltin(input string, cwd *string) bool {
 	}
 }
 
-func executeInShell(command, cwd, shell string) (int, string) {
-	cmd := exec.Command(shell, "-c", command)
-	cmd.Dir = cwd
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+// executeInShell runs a command through the central execution runner — the only
+// sanctioned path to the shell (INSTRUCTIONS.md §5). It streams output live and
+// simultaneously captures it (single execution, no double-run) so a failed
+// command can be handed to the AI fix flow.
+//
+// When gated is true the command came from the LLM (the `!` generate path or a
+// fix suggestion); it is subjected to the local policy: Denied is refused
+// outright and NeedsConfirm prompts the user. User-typed input (gated=false) is
+// the user's own intent and runs directly, preserving prior behavior.
+func executeInShell(ctx context.Context, command, cwd, shell string, gated bool, reader *bufio.Reader) (int, string) {
+	var buf strings.Builder
 
-	err := cmd.Run()
-	if err == nil {
-		return 0, ""
+	r := execution.NewRunner()
+	r.Shell = shell
+	r.Stdout = io.MultiWriter(os.Stdout, &buf)
+	r.Stderr = io.MultiWriter(os.Stderr, &buf)
+
+	if gated && execution.PolicyEnabled() {
+		r.Confirm = func(_ context.Context, _ execution.Command, v execution.Verdict) (bool, error) {
+			return confirmCommand(reader, v)
+		}
+	} else {
+		// User-typed (or policy disabled): run as-is.
+		r.AssumeYes = true
 	}
 
-	exitCode := 1
-	if exitErr, ok := err.(*exec.ExitError); ok {
-		exitCode = exitErr.ExitCode()
+	res, err := r.Run(ctx, execution.Command{Raw: command, Dir: cwd, Stdin: os.Stdin})
+
+	if err != nil {
+		switch {
+		case errors.Is(err, execution.ErrCommandDenied):
+			fmt.Fprintf(os.Stderr, "\033[31m✗ Refused by policy: %s\033[0m\n", strings.Join(res.Verdict.Reasons, "; "))
+			return 126, ""
+		case errors.Is(err, execution.ErrConfirmationDeclined):
+			fmt.Fprintln(os.Stderr, "\033[90mCommand skipped.\033[0m")
+			return 130, ""
+		case errors.Is(err, execution.ErrConfirmationRequired):
+			fmt.Fprintln(os.Stderr, "\033[33mConfirmation required; command not run.\033[0m")
+			return 130, ""
+		default:
+			fmt.Fprintf(os.Stderr, "\033[31mexec error: %v\033[0m\n", err)
+			return 1, ""
+		}
 	}
 
-	cmd2 := exec.Command(shell, "-c", command)
-	cmd2.Dir = cwd
-	out, _ := cmd2.CombinedOutput()
-	output := strings.TrimSpace(string(out))
+	output := strings.TrimSpace(buf.String())
 	if len(output) > 500 {
 		output = output[:500] + "..."
 	}
+	return res.ExitCode, output
+}
 
-	return exitCode, output
+// confirmCommand prompts the interactive user to approve a NeedsConfirm command.
+func confirmCommand(reader *bufio.Reader, v execution.Verdict) (bool, error) {
+	fmt.Fprintf(os.Stderr, "\033[33m⚠ Risk: %s — %s\nRun anyway? [y/N]: \033[0m",
+		v.Decision, strings.Join(v.Reasons, "; "))
+	if reader == nil {
+		reader = bufio.NewReader(os.Stdin)
+	}
+	answer, _ := reader.ReadString('\n')
+	answer = strings.TrimSpace(strings.ToLower(answer))
+	return answer == "y" || answer == "yes", nil
 }
 
 func offerFix(ctx context.Context, client *ai.Client, sysInfo system.SystemInfo, command, output, cwd, shell string, reader *bufio.Reader, history *[]commandRecord) {
@@ -245,7 +284,7 @@ func offerFix(ctx context.Context, client *ai.Client, sysInfo system.SystemInfo,
 		return
 	}
 
-	exitCode, fixOutput := executeInShell(suggestion, cwd, shell)
+	exitCode, fixOutput := executeInShell(ctx, suggestion, cwd, shell, true, reader)
 	*history = appendHistory(*history, suggestion, exitCode, fixOutput)
 }
 
