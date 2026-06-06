@@ -79,7 +79,7 @@ func (c *Client) Start() error {
 		"capabilities":    map[string]interface{}{},
 		"clientInfo": map[string]interface{}{
 			"name":    "gpterminal",
-			"version": "2.4.1",
+			"version": "3.0.0",
 		},
 	})
 	if err != nil {
