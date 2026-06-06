@@ -274,6 +274,7 @@ $ gpterminal explain-diff --staged
 $ gpterminal gptdo "create a script called deploy.sh and make it executable"
 $ gpterminal do "create a script called deploy.sh and make it executable"   # alias
 $ gpterminal gptdo --yes "..."                                              # auto-approve non-denied
+$ gpterminal gptdo --json --yes "..."                                       # machine-readable run report
 $ gpterminal gptdo --session deploy-plan "..."
 $ gpterminal resume deploy-plan
 ```
@@ -285,6 +286,25 @@ $ gpterminal resume deploy-plan
 - `allowed` commands run after a simple confirmation, with an `[a]uto` option.
 
 `--yes`/`-y` auto-approves `allowed` and `needs_confirm` commands (handy in scripts) but still **cannot run a `denied` command**. An AI-provided risk score may also be shown, but it is advisory only. Command output is sent back to the AI so it can continue. Sessions are saved with `--session` (resume later), and rollback hints are shown when the AI proposes a practical undo.
+
+`--json` emits a stable, machine-readable run report to stdout (human output goes to stderr), for CI/automation. It is non-interactive: `allowed` commands run, `needs_confirm` requires `--yes`, `denied` never runs. Each command records its `decision`, `reasons`, whether it `ran`, the `exit_code` (omitted when not run), and redacted `output`:
+
+```json
+{
+  "schema_version": 1,
+  "request": "create deploy.sh and make it executable",
+  "cwd": "/repo",
+  "steps": [
+    { "index": 1, "proposed_commands": ["touch deploy.sh", "chmod +x deploy.sh"],
+      "commands": [
+        { "command": "touch deploy.sh", "decision": "allowed", "ran": true, "exit_code": 0 },
+        { "command": "chmod +x deploy.sh", "decision": "allowed", "ran": true, "exit_code": 0 }
+      ] }
+  ],
+  "completed": true,
+  "aborted": false
+}
+```
 
 ### Doctor
 

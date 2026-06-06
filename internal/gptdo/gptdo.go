@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -36,6 +37,30 @@ type runner struct {
 	autoApprove bool
 	cwd         string
 	hooks       *hooks.Registry
+
+	// jsonMode makes the run non-interactive and accumulates a machine-readable
+	// RunReport. humanOut receives human-facing chatter (stdout normally, stderr
+	// in jsonMode so stdout stays pure JSON).
+	jsonMode bool
+	humanOut io.Writer
+	report   *RunReport
+}
+
+// say writes human-facing output to the configured writer (stderr in JSON mode).
+func (r *runner) say(format string, a ...interface{}) {
+	out := r.humanOut
+	if out == nil {
+		out = os.Stdout
+	}
+	fmt.Fprintf(out, format, a...)
+}
+
+// record appends a command result to the current step's JSON report (no-op when
+// not in JSON mode).
+func (r *runner) record(sr *StepReport, cr CommandReport) {
+	if sr != nil {
+		sr.Commands = append(sr.Commands, cr)
+	}
 }
 
 type commandExecution struct {
@@ -44,7 +69,7 @@ type commandExecution struct {
 	afterDir  string
 }
 
-func Run(ctx context.Context, request, sessionName string, autoApprove bool) error {
+func Run(ctx context.Context, request, sessionName string, autoApprove, jsonMode bool) error {
 	client, err := ai.NewClient()
 	if err != nil {
 		return err
@@ -61,6 +86,12 @@ func Run(ctx context.Context, request, sessionName string, autoApprove bool) err
 		autoApprove: autoApprove,
 		cwd:         cwd,
 		hooks:       hooks.NewRegistry(),
+		jsonMode:    jsonMode,
+		humanOut:    os.Stdout,
+	}
+	if jsonMode {
+		r.humanOut = os.Stderr // keep stdout pure JSON
+		r.report = &RunReport{SchemaVersion: SchemaVersion, Request: request, CWD: cwd}
 	}
 
 	messages := []openai.ChatCompletionMessage{
@@ -68,8 +99,28 @@ func Run(ctx context.Context, request, sessionName string, autoApprove bool) err
 		{Role: openai.ChatMessageRoleUser, Content: request},
 	}
 
-	fmt.Printf("Request: %s\n", request)
-	return runLoop(ctx, client, &r, request, messages, sessionName)
+	r.say("Request: %s\n", request)
+	runErr := runLoop(ctx, client, &r, request, messages, sessionName)
+
+	if jsonMode {
+		if runErr != nil && !r.report.Completed {
+			r.report.Aborted = true
+			msg := runErr.Error()
+			r.report.Error = &msg
+		}
+		return emitJSON(r.report)
+	}
+	return runErr
+}
+
+// emitJSON writes the run report as stable JSON to stdout.
+func emitJSON(rep *RunReport) error {
+	b, err := json.MarshalIndent(rep, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal gptdo report: %w", err)
+	}
+	fmt.Fprintln(os.Stdout, string(b))
+	return nil
 }
 
 func Resume(ctx context.Context, sessionName string) error {
@@ -96,10 +147,11 @@ func Resume(ctx context.Context, sessionName string) error {
 		autoApprove: record.GptDo.AutoApprove,
 		cwd:         record.GptDo.CWD,
 		hooks:       hooks.NewRegistry(),
+		humanOut:    os.Stdout,
 	}
 
-	fmt.Printf("Resuming session: %s\n", record.Name)
-	fmt.Printf("Request: %s\n", record.GptDo.Request)
+	r.say("Resuming session: %s\n", record.Name)
+	r.say("Request: %s\n", record.GptDo.Request)
 	return runLoop(ctx, client, &r, record.GptDo.Request, record.GptDo.Messages, record.Name)
 }
 
@@ -109,9 +161,9 @@ func runLoop(ctx context.Context, client *ai.Client, r *runner, request string, 
 	}
 
 	for stepNum := 1; stepNum <= maxSteps; stepNum++ {
-		fmt.Print("Planning...")
+		r.say("Planning...")
 		raw, err := client.Complete(ctx, messages)
-		fmt.Print("\r            \r")
+		r.say("\r            \r")
 		if err != nil {
 			return err
 		}
@@ -126,14 +178,18 @@ func runLoop(ctx context.Context, client *ai.Client, r *runner, request string, 
 			Content: strings.TrimSpace(raw),
 		})
 
-		fmt.Printf("\nStep %d\n", stepNum)
+		r.say("\nStep %d\n", stepNum)
 		if step.Message != "" {
-			fmt.Printf("%s\n", step.Message)
+			r.say("%s\n", step.Message)
 		}
 
 		if step.Done {
 			if step.Summary != "" {
-				fmt.Printf("\n%s\n", step.Summary)
+				r.say("\n%s\n", step.Summary)
+			}
+			if r.report != nil {
+				r.report.Completed = true
+				r.report.Summary = step.Summary
 			}
 			if err := saveSession(sessionName, request, messages, r, true, step.Summary); err != nil {
 				return err
@@ -145,7 +201,11 @@ func runLoop(ctx context.Context, client *ai.Client, r *runner, request string, 
 			return fmt.Errorf("AI did not return any commands")
 		}
 
-		report, err := r.runCommands(ctx, step.Commands, step.Rollback)
+		sr := &StepReport{Index: stepNum, Message: step.Message, Proposed: step.Commands}
+		report, err := r.runCommands(ctx, step.Commands, step.Rollback, sr)
+		if r.report != nil {
+			r.report.Steps = append(r.report.Steps, *sr)
+		}
 		if err != nil {
 			return err
 		}
@@ -162,7 +222,7 @@ func runLoop(ctx context.Context, client *ai.Client, r *runner, request string, 
 	return fmt.Errorf("stopped after %d steps without completion", maxSteps)
 }
 
-func (r *runner) runCommands(ctx context.Context, commands, rollbacks []string) (string, error) {
+func (r *runner) runCommands(ctx context.Context, commands, rollbacks []string, sr *StepReport) (string, error) {
 	var report strings.Builder
 	rejected := false
 
@@ -179,28 +239,36 @@ func (r *runner) runCommands(ctx context.Context, commands, rollbacks []string) 
 		if execution.PolicyEnabled() {
 			verdict = execution.Classify(command)
 		}
-		fmt.Printf("\n[%d/%d] %s\n", idx+1, len(commands), command)
-		fmt.Printf("Policy: %s%s\n", verdict.Decision, formatReasons(verdict))
+		r.say("\n[%d/%d] %s\n", idx+1, len(commands), command)
+		r.say("Policy: %s%s\n", verdict.Decision, formatReasons(verdict))
+
+		cr := CommandReport{Command: command, Decision: verdict.Decision, Reasons: verdict.Reasons}
 
 		// Denied is refused unconditionally — autoApprove/--yes cannot override.
 		// No advisory risk call is made for a command that will never run.
 		if verdict.Decision == execution.DecisionDenied {
-			fmt.Printf("Refused by local policy: %s\n", strings.Join(verdict.Reasons, "; "))
+			r.say("Refused by local policy: %s\n", strings.Join(verdict.Reasons, "; "))
 			rejected = true
 			report.WriteString(formatDeniedCommand(command, verdict))
+			r.record(sr, cr)
 			break
 		}
 
 		// Advisory only — the LLM risk score is shown for context but NEVER
-		// used to authorise execution.
-		riskResult, riskErr := risk.Evaluate(ctx, command)
-		if riskErr != nil {
-			fmt.Printf("Risk (advisory): unavailable (%v)\n", riskErr)
-		} else {
-			fmt.Printf("Risk (advisory): %d/10 [%s] %s\n", riskResult.Score, strings.ToUpper(riskResult.Level), riskResult.Summary)
+		// used to authorise execution. Skipped in JSON mode (non-interactive,
+		// avoids a per-command network call).
+		var riskResult *risk.RiskResult
+		var riskErr error
+		if !r.jsonMode {
+			riskResult, riskErr = risk.Evaluate(ctx, command)
+			if riskErr != nil {
+				r.say("Risk (advisory): unavailable (%v)\n", riskErr)
+			} else {
+				r.say("Risk (advisory): %d/10 [%s] %s\n", riskResult.Score, strings.ToUpper(riskResult.Level), riskResult.Summary)
+			}
 		}
 		if hint := rollbackHint(rollbacks, idx); hint != "" {
-			fmt.Printf("Rollback hint: %s\n", hint)
+			r.say("Rollback hint: %s\n", hint)
 		}
 
 		approved, enabledAuto, err := r.approve(command, verdict)
@@ -213,6 +281,7 @@ func (r *runner) runCommands(ctx context.Context, commands, rollbacks []string) 
 		if !approved {
 			rejected = true
 			report.WriteString(formatRejectedCommand(command, riskResult, riskErr))
+			r.record(sr, cr)
 			break
 		}
 
@@ -222,16 +291,22 @@ func (r *runner) runCommands(ctx context.Context, commands, rollbacks []string) 
 			return "", err
 		}
 
-		execution := commandExecution{
+		ce := commandExecution{
 			result:    result,
 			beforeDir: beforeDir,
 			afterDir:  r.cwd,
 		}
 
-		printCommandResult(execution)
-		report.WriteString(formatExecutedCommand(command, riskResult, execution, rollbackHint(rollbacks, idx)))
+		r.printCommandResult(ce)
+		report.WriteString(formatExecutedCommand(command, riskResult, ce, rollbackHint(rollbacks, idx)))
 
-		if !execution.result.Success {
+		code := result.ExitCode
+		cr.Ran = true
+		cr.ExitCode = &code
+		cr.Output = result.Output
+		r.record(sr, cr)
+
+		if !ce.result.Success {
 			break
 		}
 	}
@@ -256,8 +331,14 @@ func (r *runner) approve(command string, v execution.Verdict) (approved bool, en
 		return true, false, nil
 	}
 
+	// JSON mode is non-interactive: run Allowed commands, decline NeedsConfirm
+	// (those require an explicit --yes). Denied was already refused upstream.
+	if r.jsonMode {
+		return v.Decision == execution.DecisionAllowed, false, nil
+	}
+
 	if v.Decision == execution.DecisionNeedsConfirm {
-		fmt.Print("Higher-risk command. Execute? [y/N] ")
+		r.say("Higher-risk command. Execute? [y/N] ")
 		answer, err := r.readAnswer()
 		if err != nil {
 			return false, false, err
@@ -266,7 +347,7 @@ func (r *runner) approve(command string, v execution.Verdict) (approved bool, en
 	}
 
 	// Allowed.
-	fmt.Print("Execute? [Y]es / [a]uto / [n]o: ")
+	r.say("Execute? [Y]es / [a]uto / [n]o: ")
 	answer, err := r.readAnswer()
 	if err != nil {
 		return false, false, err
@@ -410,20 +491,20 @@ func extractCWDMarker(output string) (string, string) {
 	return cwd, cleaned
 }
 
-func printCommandResult(execution commandExecution) {
-	fmt.Printf("Exit: %d\n", execution.result.ExitCode)
-	if execution.beforeDir != execution.afterDir {
-		fmt.Printf("Working directory: %s\n", execution.afterDir)
+func (r *runner) printCommandResult(ce commandExecution) {
+	r.say("Exit: %d\n", ce.result.ExitCode)
+	if ce.beforeDir != ce.afterDir {
+		r.say("Working directory: %s\n", ce.afterDir)
 	}
-	if strings.TrimSpace(execution.result.Output) == "" {
-		fmt.Println("Output: (none)")
+	if strings.TrimSpace(ce.result.Output) == "" {
+		r.say("Output: (none)\n")
 		return
 	}
 
-	fmt.Println("Output:")
-	fmt.Print(execution.result.Output)
-	if !strings.HasSuffix(execution.result.Output, "\n") {
-		fmt.Println()
+	r.say("Output:\n")
+	r.say("%s", ce.result.Output)
+	if !strings.HasSuffix(ce.result.Output, "\n") {
+		r.say("\n")
 	}
 }
 

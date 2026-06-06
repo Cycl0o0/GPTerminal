@@ -13,6 +13,7 @@ import (
 var (
 	gptdoSession string
 	gptdoYes     bool
+	gptdoJSON    bool
 )
 
 var gptdoCmd = &cobra.Command{
@@ -23,7 +24,7 @@ var gptdoCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		usage.Global().SetCurrentCommand("gptdo")
 		request := strings.Join(args, " ")
-		if err := gptdo.Run(cmd.Context(), request, gptdoSession, gptdoYes); err != nil {
+		if err := gptdo.Run(cmd.Context(), request, gptdoSession, gptdoYes, gptdoJSON); err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 			os.Exit(1)
 		}
@@ -35,5 +36,9 @@ func init() {
 	// --yes auto-approves Allowed and NeedsConfirm commands. It NEVER bypasses a
 	// Denied command (INSTRUCTIONS.md §5).
 	gptdoCmd.Flags().BoolVarP(&gptdoYes, "yes", "y", false, "Auto-approve non-denied commands (does not bypass Denied)")
+	// --json: non-interactive, emits a stable RunReport to stdout (human output
+	// goes to stderr). Allowed commands run; NeedsConfirm requires --yes; Denied
+	// never runs.
+	gptdoCmd.Flags().BoolVar(&gptdoJSON, "json", false, "Emit a stable JSON run report (non-interactive)")
 	rootCmd.AddCommand(gptdoCmd)
 }
