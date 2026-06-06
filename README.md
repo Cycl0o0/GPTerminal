@@ -14,7 +14,10 @@ AI-powered terminal assistant that integrates OpenAI GPT, Anthropic Claude, Goog
 - **GPTSessions** (`gpterminal sessions`) - List, inspect, rename, and delete saved chat or GPTDo sessions
 - **Risk Evaluation** (`gpterminal risk <cmd>`) - Color-coded danger assessment of shell commands
 - **Vibe Mode** (`gpterminal vibe "<description>"`) - Natural language to shell command translation
-- **GPTDo** (`gpterminal gptdo "<request>"`) - Multi-step AI command execution with per-command approval
+- **GPTDo** (`gpterminal gptdo` / `do "<request>"`) - Multi-step AI command execution, gated by a local deterministic safety policy
+- **Doctor** (`gpterminal doctor`) - Offline diagnostics for config and security posture, with stable `--json`
+- **Eval** (`gpterminal eval`) - Deterministic regression suite for the command-safety policy (`--json`, `--fixture`)
+- **Abort** (`gpterminal abort <session>`) - Remove a saved session's durable state so it can no longer be resumed
 - **GPTS2T** (`gpterminal s2t <audio-file>`) - Speech-to-text transcription and optional translation
 - **GPTT2S** (`gpterminal t2s "<text>"`) - Text-to-speech audio generation
 - **GPTRead** (`gpterminal read [file] [question...]`) - AI analysis for text files, images, PDFs, and piped text
@@ -208,7 +211,7 @@ $ gpterminal resume bugfix
 
 With no arguments, `chat` opens the full-screen TUI with markdown rendering and system context awareness. With a prompt and/or piped stdin, it runs in one-shot mode so you can use it in shell pipelines. Use `--session <name>` to save and resume a named conversation later with `gpterminal resume <name>`.
 
-The chat assistant can also use local tools during a conversation to inspect files, list directories, search text, search the web, fetch web pages, stream responses, show thinking/tool status, run workspace commands directly from chat, and propose file writes with diff approval. Direct command execution in chat includes risk evaluation plus `yes` / `auto` / `no` approval, with auto-approve only available at or below the same `7/10` threshold used by GPTDo. File and path access is limited to the current working directory.
+The chat assistant can also use local tools during a conversation to inspect files, list directories, search text, search the web, fetch web pages, stream responses, show thinking/tool status, run workspace commands directly from chat, and propose file writes with diff approval. Direct command execution in chat includes risk evaluation plus `yes` / `auto` / `no` approval, with auto-approve only available at or below a `7/10` risk threshold. File and path access is limited to the current working directory.
 
 The chat TUI now shows the active session in the header and supports:
 - `Ctrl+S` to save the current conversation into a named session
@@ -269,11 +272,38 @@ $ gpterminal explain-diff --staged
 
 ```bash
 $ gpterminal gptdo "create a script called deploy.sh and make it executable"
-$ gpterminal gptdo --session deploy-plan "create a script called deploy.sh and make it executable"
+$ gpterminal do "create a script called deploy.sh and make it executable"   # alias
+$ gpterminal gptdo --yes "..."                                              # auto-approve non-denied
+$ gpterminal gptdo --session deploy-plan "..."
 $ gpterminal resume deploy-plan
 ```
 
-`gptdo` asks the AI for a short ordered list of commands, evaluates risk for each command, and lets you `accept`, `auto accept`, or `reject` each step. If you enable auto-accept, commands with a risk score above `7/10` still require manual confirmation. Command output is shown to you and sent back to the AI so it can continue the task. GPTDo now also saves named sessions with `--session` and shows rollback hints when the AI can propose a practical undo command.
+`gptdo` (alias `do`) asks the AI for a short ordered list of commands and runs them one at a time. **Authorization is decided by a local, deterministic policy — never by the AI.** Each command is classified as `allowed`, `needs_confirm`, or `denied`:
+
+- `denied` commands (e.g. `rm -rf /`, `curl … | sh`, writing to a block device) are **refused and never executed** — `--yes` cannot override this.
+- `needs_confirm` commands prompt before running (fail-closed: default is *no*).
+- `allowed` commands run after a simple confirmation, with an `[a]uto` option.
+
+`--yes`/`-y` auto-approves `allowed` and `needs_confirm` commands (handy in scripts) but still **cannot run a `denied` command**. An AI-provided risk score may also be shown, but it is advisory only. Command output is sent back to the AI so it can continue. Sessions are saved with `--session` (resume later), and rollback hints are shown when the AI proposes a practical undo.
+
+### Doctor
+
+```bash
+$ gpterminal doctor
+$ gpterminal doctor --json
+```
+
+`doctor` runs offline health checks and reports the configuration and **security posture**: active provider and whether its credential is set (the value is never printed), model, config file, whether the central execution policy and secret redaction are enabled, the MCP allowlist status, and tool availability. It exits non-zero if a required check fails, and `--json` emits a stable, redacted document for scripting.
+
+### Eval
+
+```bash
+$ gpterminal eval
+$ gpterminal eval --json
+$ gpterminal eval --fixture cases.json
+```
+
+`eval` runs the deterministic command-safety policy against a fixture of commands and verifies each gets the expected decision (`allowed` / `needs_confirm` / `denied`). It uses no AI and no shell, exits non-zero on any mismatch, and doubles as a living spec / CI gate for the policy. The built-in suite covers dangerous patterns such as `rm -rf /`, `curl … | sh`, `cat .env`, and `chmod -R 777 .`. Supply your own cases with `--fixture` (a JSON array of `{name, command, expect}`).
 
 ### GPTSessions
 
@@ -341,9 +371,11 @@ $ cat server.log | gpterminal read "summarize the main errors"
 $ gpterminal resume my-chat-session
 $ gpterminal resume deploy-plan
 $ gpterminal resume deploy-plan --export
+$ gpterminal abort deploy-plan          # delete the saved session
+$ gpterminal abort deploy-plan --yes    # skip the confirmation prompt
 ```
 
-`gpterminal resume <session>` resumes a named chat or GPTDo session. Use `--export` to print the saved session JSON.
+`gpterminal resume <session>` resumes a named chat or GPTDo session. Use `--export` to print the saved session JSON. `gpterminal abort <session>` permanently removes a saved session's durable state so it can no longer be resumed (confirmation required unless `--yes`); it only deletes GPTerminal's own saved state and never executes commands or touches your files.
 
 ### GPTImagine
 
@@ -524,6 +556,26 @@ $ gpterminal risk "rm -rf /" | cat       # Plain output when piped
 ```
 
 Colors and spinners are automatically stripped when stdout is not a TTY.
+
+### Security & Safety
+
+GPTerminal treats the AI as an untrusted advisor: the AI may *propose* a command, but only a **local, deterministic policy** may *authorize* running it. Commands are parsed (not just string-matched) and classified as `allowed`, `needs_confirm`, or `denied`. A `denied` command — e.g. `rm -rf /`, `curl … | sh`, writing to a block device, fork bombs — is never executed, and `--yes` cannot override it. Unknown or ambiguous input fails closed (confirmation required).
+
+Additional safeguards:
+
+- **Secret redaction** — API keys, tokens, JWTs, private-key blocks, and secret-named values are masked before any text is sent to an AI provider (and in logs/JSON output).
+- **MCP allowlist** — when configured, only approved MCP server commands may launch.
+- **Read-only `review`** — `gpterminal review` never writes to disk, mutates git, or runs commands.
+
+Environment toggles (all default to the safe setting):
+
+| Variable | Default | Effect when set to `0`/`off` |
+| --- | --- | --- |
+| `GPTERMINAL_EXEC_POLICY` | on | Disables the central command policy (commands bypass classification) |
+| `GPTERMINAL_REDACT` | on | Disables secret redaction before AI requests |
+| `GPTERMINAL_MCP_ALLOWLIST` | unset | When set (comma-separated commands), restricts which MCP servers may start |
+
+Run `gpterminal doctor` to see the current security posture, and `gpterminal eval` to verify the policy.
 
 ### Shell Completions
 
