@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/cycl0o0/GPTerminal/internal/ai"
+	"github.com/cycl0o0/GPTerminal/internal/execution"
 	"github.com/cycl0o0/GPTerminal/internal/hooks"
 	"github.com/cycl0o0/GPTerminal/internal/risk"
 	"github.com/cycl0o0/GPTerminal/internal/session"
@@ -18,7 +19,6 @@ import (
 
 const (
 	maxSteps            = 100
-	autoAcceptMaxRisk   = 7
 	maxCommandOutputLen = 4000
 	cwdMarker           = "__GPTDO_CWD__:"
 )
@@ -44,7 +44,7 @@ type commandExecution struct {
 	afterDir  string
 }
 
-func Run(ctx context.Context, request, sessionName string) error {
+func Run(ctx context.Context, request, sessionName string, autoApprove bool) error {
 	client, err := ai.NewClient()
 	if err != nil {
 		return err
@@ -57,9 +57,10 @@ func Run(ctx context.Context, request, sessionName string) error {
 	}
 
 	r := runner{
-		reader: bufio.NewReader(os.Stdin),
-		cwd:    cwd,
-		hooks:  hooks.NewRegistry(),
+		reader:      bufio.NewReader(os.Stdin),
+		autoApprove: autoApprove,
+		cwd:         cwd,
+		hooks:       hooks.NewRegistry(),
 	}
 
 	messages := []openai.ChatCompletionMessage{
@@ -171,18 +172,34 @@ func (r *runner) runCommands(ctx context.Context, commands, rollbacks []string) 
 			continue
 		}
 
-		riskResult, riskErr := risk.Evaluate(ctx, command)
+		// Authoritative, LOCAL decision (INSTRUCTIONS.md §5/§9): the LLM may
+		// propose a command, but only this deterministic policy authorises it.
+		verdict := execution.Classify(command)
 		fmt.Printf("\n[%d/%d] %s\n", idx+1, len(commands), command)
+		fmt.Printf("Policy: %s%s\n", verdict.Decision, formatReasons(verdict))
+
+		// Denied is refused unconditionally — autoApprove/--yes cannot override.
+		// No advisory risk call is made for a command that will never run.
+		if verdict.Decision == execution.DecisionDenied {
+			fmt.Printf("Refused by local policy: %s\n", strings.Join(verdict.Reasons, "; "))
+			rejected = true
+			report.WriteString(formatDeniedCommand(command, verdict))
+			break
+		}
+
+		// Advisory only — the LLM risk score is shown for context but NEVER
+		// used to authorise execution.
+		riskResult, riskErr := risk.Evaluate(ctx, command)
 		if riskErr != nil {
-			fmt.Printf("Risk: unavailable (%v)\n", riskErr)
+			fmt.Printf("Risk (advisory): unavailable (%v)\n", riskErr)
 		} else {
-			fmt.Printf("Risk: %d/10 [%s] %s\n", riskResult.Score, strings.ToUpper(riskResult.Level), riskResult.Summary)
+			fmt.Printf("Risk (advisory): %d/10 [%s] %s\n", riskResult.Score, strings.ToUpper(riskResult.Level), riskResult.Summary)
 		}
 		if hint := rollbackHint(rollbacks, idx); hint != "" {
 			fmt.Printf("Rollback hint: %s\n", hint)
 		}
 
-		approved, enabledAuto, err := r.approve(command, riskResult, riskErr)
+		approved, enabledAuto, err := r.approve(command, verdict)
 		if err != nil {
 			return "", err
 		}
@@ -224,62 +241,47 @@ func (r *runner) runCommands(ctx context.Context, commands, rollbacks []string) 
 	return report.String(), nil
 }
 
-func (r *runner) approve(command string, rr *risk.RiskResult, riskErr error) (approved bool, enableAuto bool, err error) {
-	allowAuto := riskErr == nil && rr != nil && rr.Score <= autoAcceptMaxRisk
-	requiresManual := !r.autoApprove || riskErr != nil || (rr != nil && rr.Score > autoAcceptMaxRisk)
-	if !requiresManual {
-		fmt.Printf("Auto-accepted (risk %d/10 <= %d/10).\n", rr.Score, autoAcceptMaxRisk)
+// approve decides whether a non-Denied command runs. Authorisation is driven by
+// the local Verdict, never by the LLM risk score:
+//   - autoApprove (--yes / auto): Allowed and NeedsConfirm run without a prompt
+//     (this is exactly what --yes means; Denied was already refused upstream).
+//   - interactive Allowed: prompt with a safe default of Yes; offer [a]uto.
+//   - interactive NeedsConfirm: prompt fail-closed with a default of No.
+func (r *runner) approve(command string, v execution.Verdict) (approved bool, enableAuto bool, err error) {
+	if r.autoApprove {
 		return true, false, nil
 	}
 
-	if r.autoApprove {
-		switch {
-		case riskErr != nil:
-			fmt.Println("Auto-accept bypassed because risk evaluation failed.")
-		case rr != nil:
-			fmt.Printf("Auto-accept bypassed because risk is %d/10 > %d/10.\n", rr.Score, autoAcceptMaxRisk)
-		}
-		fmt.Print("Execute? [Y/n] ")
+	if v.Decision == execution.DecisionNeedsConfirm {
+		fmt.Print("Higher-risk command. Execute? [y/N] ")
 		answer, err := r.readAnswer()
 		if err != nil {
 			return false, false, err
 		}
-		return answer == "" || answer == "y" || answer == "yes", false, nil
+		return answer == "y" || answer == "yes", false, nil
 	}
 
-	if !allowAuto {
-		switch {
-		case riskErr != nil:
-			fmt.Println("Auto-accept is unavailable because risk evaluation failed.")
-		case rr != nil:
-			fmt.Printf("Auto-accept is unavailable because risk is %d/10 > %d/10.\n", rr.Score, autoAcceptMaxRisk)
-		}
-		fmt.Print("Execute? [Y/n] ")
-		answer, err := r.readAnswer()
-		if err != nil {
-			return false, false, err
-		}
-		return answer == "" || answer == "y" || answer == "yes", false, nil
-	}
-
+	// Allowed.
 	fmt.Print("Execute? [Y]es / [a]uto / [n]o: ")
 	answer, err := r.readAnswer()
 	if err != nil {
 		return false, false, err
 	}
-
 	switch answer {
 	case "", "y", "yes":
 		return true, false, nil
 	case "a", "auto":
-		if riskErr == nil && rr != nil && rr.Score <= autoAcceptMaxRisk {
-			return true, true, nil
-		}
-		fmt.Println("Auto-accept is only enabled for commands at or below the 7/10 risk threshold.")
-		return true, false, nil
+		return true, true, nil
 	default:
 		return false, false, nil
 	}
+}
+
+func formatReasons(v execution.Verdict) string {
+	if len(v.Reasons) == 0 {
+		return ""
+	}
+	return " — " + strings.Join(v.Reasons, "; ")
 }
 
 func (r *runner) readAnswer() (string, error) {
@@ -419,6 +421,19 @@ func printCommandResult(execution commandExecution) {
 	if !strings.HasSuffix(execution.result.Output, "\n") {
 		fmt.Println()
 	}
+}
+
+// formatDeniedCommand tells the model a command was blocked by local policy so
+// it proposes a safer alternative instead of retrying the same command.
+func formatDeniedCommand(command string, v execution.Verdict) string {
+	var b strings.Builder
+	b.WriteString("Command DENIED by local security policy and not executed.\n")
+	b.WriteString(fmt.Sprintf("Command: %s\n", command))
+	if len(v.Reasons) > 0 {
+		b.WriteString(fmt.Sprintf("Reason: %s\n", strings.Join(v.Reasons, "; ")))
+	}
+	b.WriteString("Do not retry this command. Propose a safer approach.\n")
+	return b.String()
 }
 
 func formatRejectedCommand(command string, rr *risk.RiskResult, riskErr error) string {
