@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/cycl0o0/GPTerminal/internal/redact"
 )
 
 // Command is a request to run a shell command through the central runner.
@@ -37,35 +39,49 @@ type Confirmer func(ctx context.Context, cmd Command, v Verdict) (bool, error)
 // Runner is the single, central path for executing shell commands. It is the
 // ONLY place in the codebase permitted to call os/exec (INSTRUCTIONS.md §5).
 type Runner struct {
-	// Shell is the interpreter; defaults to $SHELL or "bash".
+	// Shell is the interpreter; defaults to $SHELL or "bash" (Unix) / "cmd"
+	// (Windows) when empty. See shellCommand in the platform files.
 	Shell string
 	// AssumeYes mirrors the --yes flag: it upgrades NeedsConfirm to execution
 	// but NEVER converts Denied to allowed.
 	AssumeYes bool
+	// Trusted, when true, executes without policy classification. It is for
+	// command strings that come from local trusted config (e.g. user-defined
+	// hooks), NOT from the LLM or untrusted input. Trusted execution still flows
+	// through this single runner so it keeps redaction and workspace checks.
+	Trusted bool
 	// Confirm is consulted for NeedsConfirm commands when AssumeYes is false.
 	Confirm Confirmer
 	// Stdout/Stderr, when non-nil, stream output live; otherwise it is captured
 	// into the Result.
 	Stdout io.Writer
 	Stderr io.Writer
+	// RedactOutput, when true, masks secrets in captured Stdout/Stderr before
+	// they are returned — important when the output is fed back to an LLM
+	// (INSTRUCTIONS.md §5). Only applies in capture mode (Stdout/Stderr unset).
+	RedactOutput bool
 	// Workspace, when set, bounds the working directory.
 	Workspace *Workspace
 }
 
 // NewRunner returns a Runner with safe defaults: capture mode, fail-closed
 // (no Confirmer means NeedsConfirm commands return ErrConfirmationRequired).
+// The shell is resolved per-platform at execution time.
 func NewRunner() *Runner {
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "bash"
-	}
-	return &Runner{Shell: shell}
+	return &Runner{}
 }
 
 // Authorize runs the policy and confirmation gate without executing. It returns
 // the verdict and, if the command may proceed, ok=true. Errors are the package
 // sentinels (ErrCommandDenied, ErrConfirmationRequired, ErrConfirmationDeclined).
 func (r *Runner) Authorize(ctx context.Context, cmd Command) (Verdict, bool, error) {
+	// Trusted execution and the global policy-disabled rollback both bypass
+	// classification (everything Allowed). This keeps ALL shell execution on the
+	// single runner path while honoring GPTERMINAL_EXEC_POLICY (§3 safe default).
+	if r.Trusted || !PolicyEnabled() {
+		return Verdict{Decision: DecisionAllowed}, true, nil
+	}
+
 	v := Classify(cmd.Raw)
 
 	switch v.Decision {
@@ -113,12 +129,7 @@ func (r *Runner) Run(ctx context.Context, cmd Command) (*Result, error) {
 		}
 	}
 
-	shell := r.Shell
-	if shell == "" {
-		shell = "bash"
-	}
-
-	c := exec.CommandContext(ctx, shell, "-c", cmd.Raw)
+	c := r.shellCommand(ctx, cmd.Raw)
 	c.Dir = dir
 	if cmd.Env != nil {
 		c.Env = cmd.Env
@@ -143,6 +154,10 @@ func (r *Runner) Run(ctx context.Context, cmd Command) (*Result, error) {
 	res.Ran = true
 	res.Stdout = outBuf.String()
 	res.Stderr = errBuf.String()
+	if r.RedactOutput {
+		res.Stdout = redact.String(res.Stdout)
+		res.Stderr = redact.String(res.Stderr)
+	}
 
 	if runErr == nil {
 		res.ExitCode = 0

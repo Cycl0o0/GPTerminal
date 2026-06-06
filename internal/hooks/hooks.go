@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"strconv"
 	"sync"
 
+	"github.com/cycl0o0/GPTerminal/internal/execution"
 	"github.com/spf13/viper"
 )
 
@@ -121,10 +121,6 @@ func (r *Registry) Fire(ctx context.Context, event Event, data interface{}) erro
 }
 
 func (r *Registry) runShellHook(ctx context.Context, event Event, hc HookConfig, data interface{}) error {
-	cmd := exec.CommandContext(ctx, "sh", "-c", hc.Command)
-	cmd.Stderr = os.Stderr
-	cmd.Stdout = os.Stderr
-
 	env := os.Environ()
 	env = append(env, "GPT_EVENT="+string(event))
 
@@ -137,6 +133,14 @@ func (r *Registry) runShellHook(ctx context.Context, event Event, hc HookConfig,
 		env = append(env, "GPT_EXIT_CODE="+strconv.Itoa(v.ExitCode))
 	}
 
-	cmd.Env = env
-	return cmd.Run()
+	// Hooks are local, user-authored config — trusted automation, not LLM input.
+	// They run as Trusted (no deny/confirm UX) but still flow through the single
+	// central runner so there is no raw shell execution outside internal/execution.
+	runner := execution.NewRunner()
+	runner.Trusted = true
+	runner.Stdout = os.Stderr
+	runner.Stderr = os.Stderr
+
+	_, err := runner.Run(ctx, execution.Command{Raw: hc.Command, Env: env})
+	return err
 }

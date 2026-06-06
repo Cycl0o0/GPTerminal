@@ -174,7 +174,11 @@ func (r *runner) runCommands(ctx context.Context, commands, rollbacks []string) 
 
 		// Authoritative, LOCAL decision (INSTRUCTIONS.md §5/§9): the LLM may
 		// propose a command, but only this deterministic policy authorises it.
-		verdict := execution.Classify(command)
+		// Honors the GPTERMINAL_EXEC_POLICY rollback flag for parity with the runner.
+		verdict := execution.Verdict{Decision: execution.DecisionAllowed}
+		if execution.PolicyEnabled() {
+			verdict = execution.Classify(command)
+		}
 		fmt.Printf("\n[%d/%d] %s\n", idx+1, len(commands), command)
 		fmt.Printf("Policy: %s%s\n", verdict.Decision, formatReasons(verdict))
 
