@@ -7,11 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/cycl0o0/GPTerminal/internal/ai"
 	"github.com/cycl0o0/GPTerminal/internal/config"
@@ -26,10 +29,11 @@ import (
 )
 
 const (
-	maxToolRounds      = 8
+	maxToolRounds      = 50
 	maxToolOutputChars = 12000
 	maxReadFileChars   = 100000
 	maxListEntries     = 200
+	maxGlobResults     = 200
 	maxStdinBytes      = 100000
 )
 
@@ -51,7 +55,12 @@ type ApprovalDecision struct {
 }
 
 type StreamOptions struct {
-	AllowWriteTools  bool
+	AllowWriteTools bool
+	// LiveContent streams assistant text chunk-by-chunk via OnContent as it
+	// arrives, including narration that precedes tool calls. When false (the
+	// default for chat/agent), content is emitted once after the turn and only
+	// when no tool calls were produced.
+	LiveContent      bool
 	OnThinking       func(string)
 	OnContent        func(string)
 	OnToolCall       func(name, arguments string)
@@ -159,7 +168,7 @@ func (r *Runner) streamAssistant(ctx context.Context, history []openai.ChatCompl
 		},
 	}
 
-	stream, err := r.client.CreateChatCompletionStream(ctx, req)
+	stream, err := r.createStreamWithRetry(ctx, req)
 	if err != nil {
 		return openai.ChatCompletionMessage{}, err
 	}
@@ -189,7 +198,10 @@ func (r *Runner) streamAssistant(ctx context.Context, history []openai.ChatCompl
 		}
 		if evt.Content != "" {
 			content.WriteString(evt.Content)
-			if isOpenClaw && opts.OnContent != nil {
+			// Stream text live: OpenClaw forwards its events inline, and any
+			// caller that opted into LiveContent wants chunk-by-chunk text
+			// (including narration that precedes tool calls).
+			if (isOpenClaw || opts.LiveContent) && opts.OnContent != nil {
 				opts.OnContent(evt.Content)
 			}
 		}
@@ -206,14 +218,15 @@ func (r *Runner) streamAssistant(ctx context.Context, history []openai.ChatCompl
 
 	ordered := orderedToolCalls(toolCalls)
 
-	// For OpenClaw, always emit accumulated content (server-side tool events
-	// are already forwarded inline above). For other providers, only emit
-	// when no tool calls to avoid leaking planning text.
+	// Reasoning and (non-live) content are emitted once, only on the final,
+	// tool-call-free turn. OpenClaw already streamed both live inline above,
+	// so it is excluded here to avoid duplication; LiveContent callers already
+	// received their text chunk-by-chunk too.
 	if !isOpenClaw && len(ordered) == 0 {
 		if reasoning.Len() > 0 && opts.OnThinking != nil {
 			opts.OnThinking(strings.TrimSpace(reasoning.String()))
 		}
-		if content.Len() > 0 && opts.OnContent != nil {
+		if !opts.LiveContent && content.Len() > 0 && opts.OnContent != nil {
 			opts.OnContent(content.String())
 		}
 	}
@@ -224,6 +237,58 @@ func (r *Runner) streamAssistant(ctx context.Context, history []openai.ChatCompl
 		Content:   content.String(),
 		ToolCalls: ordered,
 	}, nil
+}
+
+// createStreamWithRetry opens a chat-completion stream, retrying transient
+// (rate-limit / server / network) failures a small number of times with
+// backoff. Only stream creation is retried; errors that surface mid-stream
+// (during Recv) are returned immediately.
+func (r *Runner) createStreamWithRetry(ctx context.Context, req openai.ChatCompletionRequest) (ai.ChatStream, error) {
+	const maxAttempts = 3
+	backoffs := []time.Duration{500 * time.Millisecond, time.Second, 2 * time.Second}
+
+	var stream ai.ChatStream
+	var err error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		stream, err = r.client.CreateChatCompletionStream(ctx, req)
+		if err == nil {
+			return stream, nil
+		}
+		if !isRetryableStreamErr(err) {
+			return nil, err
+		}
+		if attempt+1 < maxAttempts {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoffs[attempt]):
+			}
+		}
+	}
+	return nil, err
+}
+
+// isRetryableStreamErr reports whether a stream-creation error is worth
+// retrying. It walks the error chain (client errors are wrapped in
+// *gperr.APIError) to find the underlying provider/net error.
+func isRetryableStreamErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr *openai.APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.HTTPStatusCode {
+		case 408, 409, 429, 500, 502, 503, 504:
+			return true
+		}
+		return false
+	}
+	// Network-level failures (DNS, connection reset, timeout, EOF).
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	return false
 }
 
 func IsStdoutTTY() bool {
@@ -287,13 +352,21 @@ func chatTools(allowWrite bool) []openai.Tool {
 			Type: openai.ToolTypeFunction,
 			Function: &openai.FunctionDefinition{
 				Name:        "read_file",
-				Description: "Read a local text file from the current working directory. Use this for source files, logs, configs, markdown, and other text files.",
+				Description: "Read a local text file from the current working directory. Use this for source files, logs, configs, markdown, and other text files. For large files, use offset and limit (1-indexed lines) to page through specific sections instead of reading the whole file at once.",
 				Parameters: map[string]any{
 					"type": "object",
 					"properties": map[string]any{
 						"path": map[string]any{
 							"type":        "string",
 							"description": "Path to the file, relative to the current working directory.",
+						},
+						"offset": map[string]any{
+							"type":        "integer",
+							"description": "Optional 1-indexed line number to start reading from. Defaults to the first line.",
+						},
+						"limit": map[string]any{
+							"type":        "integer",
+							"description": "Optional maximum number of lines to read starting at offset.",
 						},
 					},
 					"required": []string{"path"},
@@ -331,6 +404,27 @@ func chatTools(allowWrite bool) []openai.Tool {
 						"path": map[string]any{
 							"type":        "string",
 							"description": "Path to search inside, relative to the current working directory. Defaults to the current working directory when omitted.",
+						},
+					},
+					"required": []string{"pattern"},
+				},
+			},
+		},
+		{
+			Type: openai.ToolTypeFunction,
+			Function: &openai.FunctionDefinition{
+				Name:        "glob",
+				Description: "Find files by name pattern, fast. Use this to discover files (e.g. all Go files, all configs) before reading them. Supports * and ** wildcards and brace expansion, e.g. \"**/*.go\", \"src/**/*.{ts,tsx}\".",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"pattern": map[string]any{
+							"type":        "string",
+							"description": "Glob pattern, relative to the current working directory. Supports **, *, ?, and {a,b} groups.",
+						},
+						"path": map[string]any{
+							"type":        "string",
+							"description": "Directory to search in, relative to the current working directory. Defaults to the current working directory when omitted.",
 						},
 					},
 					"required": []string{"pattern"},
@@ -520,12 +614,14 @@ func (r *Runner) executeToolCall(ctx context.Context, call openai.ToolCall, opts
 	switch call.Function.Name {
 	case "read_file":
 		var args struct {
-			Path string `json:"path"`
+			Path   string `json:"path"`
+			Offset int    `json:"offset"`
+			Limit  int    `json:"limit"`
 		}
 		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
 			return "Error: invalid tool arguments: " + err.Error()
 		}
-		out, err := r.readFile(args.Path)
+		out, err := r.readFile(args.Path, args.Offset, args.Limit)
 		if err != nil {
 			return "Error: " + err.Error()
 		}
@@ -553,6 +649,20 @@ func (r *Runner) executeToolCall(ctx context.Context, call openai.ToolCall, opts
 			return "Error: invalid tool arguments: " + err.Error()
 		}
 		out, err := r.searchText(args.Pattern, args.Path)
+		if err != nil {
+			return "Error: " + err.Error()
+		}
+		return out
+
+	case "glob":
+		var args struct {
+			Pattern string `json:"pattern"`
+			Path    string `json:"path"`
+		}
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+			return "Error: invalid tool arguments: " + err.Error()
+		}
+		out, err := r.globFiles(args.Pattern, args.Path)
 		if err != nil {
 			return "Error: " + err.Error()
 		}
@@ -709,7 +819,15 @@ func (r *Runner) resolveWorkspacePath(path string) (string, error) {
 		return "", fmt.Errorf("resolve path: %w", err)
 	}
 
-	rel, err := filepath.Rel(r.workDir, candidate)
+	// Resolve the workspace root the same way so that a root reached via a
+	// symlink (e.g. /tmp -> /private/tmp on macOS) compares cleanly against
+	// the resolved candidate instead of falsely "escaping".
+	base := r.workDir
+	if rb, err := filepath.EvalSymlinks(base); err == nil {
+		base = rb
+	}
+
+	rel, err := filepath.Rel(base, candidate)
 	if err != nil {
 		return "", fmt.Errorf("resolve path: %w", err)
 	}
@@ -727,7 +845,7 @@ func (r *Runner) relativePath(path string) string {
 	return rel
 }
 
-func (r *Runner) readFile(path string) (string, error) {
+func (r *Runner) readFile(path string, offset, limit int) (string, error) {
 	resolved, err := r.resolveWorkspacePath(path)
 	if err != nil {
 		return "", err
@@ -762,11 +880,50 @@ func (r *Runner) readFile(path string) (string, error) {
 	}
 
 	content := string(data)
-	if truncated {
+	header := fmt.Sprintf("File: %s", resolved)
+
+	// Line-based paging: offset/limit are 1-indexed and optional.
+	if offset > 0 || limit > 0 {
+		sliced, startLine, endLine := sliceLines(content, offset, limit)
+		content = sliced
+		header = fmt.Sprintf("File: %s (lines %d-%d)", resolved, startLine, endLine)
+	} else if truncated {
 		content += "\n...[truncated]"
 	}
 
-	return fmt.Sprintf("File: %s\n\n%s", resolved, content), nil
+	return fmt.Sprintf("%s\n\n%s", header, content), nil
+}
+
+// sliceLines returns the subset of content covering 1-indexed lines
+// [offset, offset+limit-1]. offset<=0 starts at line 1; limit<=0 means no
+// upper bound. It returns the sliced text plus the inclusive start and end
+// line numbers actually shown.
+func sliceLines(content string, offset, limit int) (string, int, int) {
+	lines := strings.Split(content, "\n")
+	start := 1
+	if offset > 1 {
+		start = offset
+	}
+	startIdx := start - 1
+	if startIdx > len(lines) {
+		startIdx = len(lines)
+	}
+	endIdx := len(lines)
+	if limit > 0 {
+		endIdx = startIdx + limit
+		if endIdx > len(lines) {
+			endIdx = len(lines)
+		}
+	}
+	if startIdx > endIdx {
+		startIdx = endIdx
+	}
+	out := strings.Join(lines[startIdx:endIdx], "\n")
+	endLine := endIdx
+	if endLine < start {
+		endLine = start
+	}
+	return out, start, endLine
 }
 
 func (r *Runner) listDirectory(path string) (string, error) {
@@ -830,6 +987,150 @@ func (r *Runner) searchText(pattern, path string) (string, error) {
 		return "", fmt.Errorf("search text: %s", strings.TrimSpace(string(out)))
 	}
 	return truncateText(string(out), maxToolOutputChars), nil
+}
+
+func (r *Runner) globFiles(pattern, path string) (string, error) {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return "", fmt.Errorf("pattern cannot be empty")
+	}
+	root, err := r.resolveWorkspacePath(path)
+	if err != nil {
+		return "", err
+	}
+
+	re, err := globToRegex(pattern)
+	if err != nil {
+		return "", fmt.Errorf("invalid glob pattern: %w", err)
+	}
+
+	skipDirs := map[string]bool{
+		".git": true, "node_modules": true, ".hg": true, ".svn": true,
+		"vendor": true, ".venv": true, "__pycache__": true, "dist": true, "build": true,
+	}
+
+	var matches []string
+	walkErr := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if p != root && skipDirs[d.Name()] {
+				return filepath.SkipDir
+			}
+			if p != root && strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if re.MatchString(rel) {
+			matches = append(matches, rel)
+		}
+		if len(matches) >= maxGlobResults {
+			return errGlobLimitReached
+		}
+		return nil
+	})
+	if walkErr != nil && !errors.Is(walkErr, errGlobLimitReached) {
+		return "", fmt.Errorf("glob: %w", walkErr)
+	}
+
+	if len(matches) == 0 {
+		return "No files matched.", nil
+	}
+	sort.Strings(matches)
+	out := strings.Join(matches, "\n")
+	if len(matches) >= maxGlobResults {
+		out += fmt.Sprintf("\n... and possibly more (capped at %d results)", maxGlobResults)
+	}
+	return out, nil
+}
+
+var errGlobLimitReached = errors.New("glob result limit reached")
+
+// globToRegex compiles a shell-style glob into a regexp that matches full
+// slash-separated relative paths. Supports: ** (any path, including
+// separators), * (any run within a path segment), ? (single char), and
+// {a,b,c} alternations. Patterns are anchored to the whole path.
+func globToRegex(pattern string) (*regexp.Regexp, error) {
+	var b strings.Builder
+	b.WriteString("^")
+	i := 0
+	for i < len(pattern) {
+		c := pattern[i]
+		switch c {
+		case '*':
+			if i+1 < len(pattern) && pattern[i+1] == '*' {
+				b.WriteString(".*")
+				i += 2
+				// tolerate **/ and /** forms
+				if i < len(pattern) && pattern[i] == '/' {
+					i++
+				}
+				continue
+			}
+			b.WriteString("[^/]*")
+		case '?':
+			b.WriteString("[^/]")
+		case '.':
+			b.WriteString(`\.`)
+		case '+', '(', ')', '^', '$', '|', '\\':
+			b.WriteByte('\\')
+			b.WriteByte(c)
+		case '{':
+			// translate {a,b,c} to (a|b|c), escaping inner metachars naively
+			end := strings.IndexByte(pattern[i:], '}')
+			if end < 0 {
+				return nil, fmt.Errorf("unbalanced '{' in pattern")
+			}
+			inner := pattern[i+1 : i+end]
+			parts := strings.Split(inner, ",")
+			b.WriteByte('(')
+			for j, p := range parts {
+				if j > 0 {
+					b.WriteByte('|')
+				}
+				ep, err := escapeGlobSegment(p)
+				if err != nil {
+					return nil, err
+				}
+				b.WriteString(ep)
+			}
+			b.WriteByte(')')
+			i += end
+		default:
+			b.WriteByte(c)
+		}
+		i++
+	}
+	b.WriteString("$")
+	return regexp.Compile(b.String())
+}
+
+// escapeGlobSegment escapes a literal segment inside a {} group while still
+// allowing its own * / ? wildcards.
+func escapeGlobSegment(s string) (string, error) {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch c {
+		case '*':
+			b.WriteString("[^/]*")
+		case '?':
+			b.WriteString("[^/]")
+		case '.', '+', '(', ')', '^', '$', '|', '\\':
+			b.WriteByte('\\')
+			b.WriteByte(c)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String(), nil
 }
 
 func (r *Runner) runCommand(ctx context.Context, command string, opts StreamOptions) (string, error) {
@@ -1164,14 +1465,86 @@ func parseSafeCommand(command string) ([]string, error) {
 	if command == "" {
 		return nil, fmt.Errorf("command cannot be empty")
 	}
-	if strings.ContainsAny(command, "|&;><`()$\n") {
-		return nil, fmt.Errorf("shell operators are not allowed in chat tools")
+	args, err := shellSplit(command)
+	if err != nil {
+		return nil, err
 	}
-
-	args := strings.Fields(command)
 	if len(args) == 0 {
 		return nil, fmt.Errorf("command cannot be empty")
 	}
+	return args, nil
+}
+
+// shellSplit tokenizes a command string the way a POSIX shell would split
+// words, honoring single quotes, double quotes, and backslash escapes so
+// that arguments containing spaces survive (e.g. git commit -m "fix: x").
+// Any shell operator (| & ; > < ` ( ) $ or newline) that appears UNQUOTED is
+// rejected, which lets callers safely exec args[0] without invoking a shell.
+func shellSplit(command string) ([]string, error) {
+	const operators = "|&;><`()$\n"
+	var (
+		args     []string
+		cur      strings.Builder
+		inSingle bool
+		inDouble bool
+		haveTok  bool
+	)
+	flush := func() {
+		if haveTok {
+			args = append(args, cur.String())
+			cur.Reset()
+			haveTok = false
+		}
+	}
+	for i := 0; i < len(command); i++ {
+		c := command[i]
+		switch {
+		case inSingle:
+			if c == '\'' {
+				inSingle = false
+			} else {
+				cur.WriteByte(c)
+			}
+		case inDouble:
+			switch {
+			case c == '"':
+				inDouble = false
+			case c == '\\' && i+1 < len(command):
+				next := command[i+1]
+				if next == '"' || next == '\\' || next == '$' || next == '`' || next == '\n' {
+					cur.WriteByte(next)
+					i++
+				} else {
+					cur.WriteByte(c)
+				}
+			default:
+				cur.WriteByte(c)
+			}
+		case c == '\'':
+			inSingle = true
+			haveTok = true // empty '' still forms a token
+		case c == '"':
+			inDouble = true
+			haveTok = true
+		case c == '\\':
+			if i+1 < len(command) {
+				cur.WriteByte(command[i+1])
+				i++
+				haveTok = true
+			}
+		case strings.IndexByte(operators, c) >= 0:
+			return nil, fmt.Errorf("shell operators are not allowed in chat tools")
+		case c == ' ' || c == '\t':
+			flush()
+		default:
+			cur.WriteByte(c)
+			haveTok = true
+		}
+	}
+	if inSingle || inDouble {
+		return nil, fmt.Errorf("unterminated quote in command")
+	}
+	flush()
 	return args, nil
 }
 
@@ -1186,27 +1559,6 @@ func validateSafeCommand(args []string) error {
 		}
 		switch args[1] {
 		case "status", "diff", "log", "show", "branch", "rev-parse", "ls-files":
-			return nil
-		default:
-			return fmt.Errorf("git subcommand %q is not allowed in chat tools", args[1])
-		}
-	default:
-		return fmt.Errorf("command %q is not allowed in chat tools", base)
-	}
-}
-
-func validateWritableCommand(args []string) error {
-	base := args[0]
-	switch base {
-	case "pwd", "ls", "cat", "head", "tail", "wc", "file", "stat", "find", "grep", "rg", "uname", "whoami", "id", "ps", "df", "du", "which",
-		"mkdir", "touch", "chmod", "mv", "cp", "rm", "rmdir", "go", "make", "npm", "pnpm", "yarn", "cargo", "pytest", "python3", "node", "npx":
-		return nil
-	case "git":
-		if len(args) < 2 {
-			return fmt.Errorf("git subcommand required")
-		}
-		switch args[1] {
-		case "status", "diff", "log", "show", "branch", "rev-parse", "ls-files", "add", "restore":
 			return nil
 		default:
 			return fmt.Errorf("git subcommand %q is not allowed in chat tools", args[1])

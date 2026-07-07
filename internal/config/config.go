@@ -10,17 +10,17 @@ import (
 )
 
 const (
-	DefaultModel               = "gpt-4o-mini"
-	DefaultTemp                = 0.7
-	DefaultMaxTokens           = 2048
-	DefaultCostLimit           = 0.0 // 0 = unlimited
-	DefaultWarnPct             = 80.0
-	DefaultImageModel          = "gpt-image-1"
-	DefaultImageSize           = "1024x1024"
-	DefaultBaseURL             = "https://api.openai.com/v1"
-	DefaultS2TModel            = "gpt-4o-mini-transcribe"
-	DefaultT2SModel            = "gpt-4o-mini-tts"
-	DefaultT2SVoice            = "marin"
+	DefaultModel                = "gpt-4o-mini"
+	DefaultTemp                 = 0.7
+	DefaultMaxTokens            = 2048
+	DefaultCostLimit            = 0.0 // 0 = unlimited
+	DefaultWarnPct              = 80.0
+	DefaultImageModel           = "gpt-image-1"
+	DefaultImageSize            = "1024x1024"
+	DefaultBaseURL              = "https://api.openai.com/v1"
+	DefaultS2TModel             = "gpt-4o-mini-transcribe"
+	DefaultT2SModel             = "gpt-4o-mini-tts"
+	DefaultT2SVoice             = "marin"
 	DefaultRealtimeSessionModel = "gpt-realtime"
 )
 
@@ -213,22 +213,30 @@ func saveValue(key, value string) error {
 	return os.Chmod(cfgFile, 0600)
 }
 
-func SaveProvider(provider string) error     { return saveValue("provider", provider) }
-func SaveAnthropicAPIKey(key string) error   { return saveValue("anthropic_api_key", key) }
-func SaveGeminiAPIKey(key string) error      { return saveValue("gemini_api_key", key) }
-func SaveAPIBaseURL(url string) error        { return saveValue("api_base_url", url) }
-func SaveModel(model string) error     { return saveValue("model", model) }
-func SaveAPIKey(key string) error      { return saveValue("api_key", key) }
-func SaveS2TModel(model string) error  { return saveValue("s2t_model", model) }
-func SaveT2SModel(model string) error  { return saveValue("t2s_model", model) }
-func SaveT2SVoice(voice string) error  { return saveValue("t2s_voice", voice) }
-func SaveImageModel(model string) error { return saveValue("image_model", model) }
-func SaveS2TBaseURL(url string) error  { return saveValue("s2t_base_url", url) }
-func SaveT2SBaseURL(url string) error  { return saveValue("t2s_base_url", url) }
-func SaveImageBaseURL(url string) error { return saveValue("image_base_url", url) }
-func SaveRealtimeURL(url string) error { return saveValue("realtime_url", url) }
-func SaveRealtimeModel(model string) error { return saveValue("realtime_model", model) }
-func SaveOpenClawURL(url string) error        { return saveValue("openclaw_url", url) }
-func SaveOpenClawToken(token string) error    { return saveValue("openclaw_token", token) }
-func SaveOpenClawAgent(agent string) error    { return saveValue("openclaw_agent", agent) }
+func SaveProvider(provider string) error   { return saveValue("provider", provider) }
+func SaveAnthropicAPIKey(key string) error { return saveValue("anthropic_api_key", key) }
+func SaveGeminiAPIKey(key string) error    { return saveValue("gemini_api_key", key) }
+func SaveAPIBaseURL(url string) error      { return saveValue("api_base_url", url) }
+func SaveModel(model string) error         { return saveValue("model", model) }
+
+// SetActiveModel overrides the active model for the current process only,
+// without writing to disk. Subsequent config.Model() calls return this value.
+func SetActiveModel(model string) {
+	if strings.TrimSpace(model) != "" {
+		viper.Set("model", strings.TrimSpace(model))
+	}
+}
+func SaveAPIKey(key string) error            { return saveValue("api_key", key) }
+func SaveS2TModel(model string) error        { return saveValue("s2t_model", model) }
+func SaveT2SModel(model string) error        { return saveValue("t2s_model", model) }
+func SaveT2SVoice(voice string) error        { return saveValue("t2s_voice", voice) }
+func SaveImageModel(model string) error      { return saveValue("image_model", model) }
+func SaveS2TBaseURL(url string) error        { return saveValue("s2t_base_url", url) }
+func SaveT2SBaseURL(url string) error        { return saveValue("t2s_base_url", url) }
+func SaveImageBaseURL(url string) error      { return saveValue("image_base_url", url) }
+func SaveRealtimeURL(url string) error       { return saveValue("realtime_url", url) }
+func SaveRealtimeModel(model string) error   { return saveValue("realtime_model", model) }
+func SaveOpenClawURL(url string) error       { return saveValue("openclaw_url", url) }
+func SaveOpenClawToken(token string) error   { return saveValue("openclaw_token", token) }
+func SaveOpenClawAgent(agent string) error   { return saveValue("openclaw_agent", agent) }
 func SaveOpenClawPassword(pass string) error { return saveValue("openclaw_password", pass) }

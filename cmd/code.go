@@ -10,17 +10,20 @@ import (
 )
 
 var codeSession string
+var codeModel string
 
 var codeCmd = &cobra.Command{
 	Use:   "code",
 	Short: "Interactive AI coding assistant",
-	Long:  "Launch an interactive coding session with AI-powered file editing, code exploration, and project-aware assistance. Similar to Claude Code.",
+	Long:  "Launch an interactive coding session with AI-powered file editing, code exploration, and project-aware assistance.",
 	Example: "  gpterminal code\n" +
-		"  gpterminal code --session myproject",
+		"  gpterminal code --session myproject\n" +
+		"  gpterminal code --model gpt-4o",
 	Run: func(cmd *cobra.Command, args []string) {
 		usage.Global().SetCurrentCommand("code")
 		cfg := code.Config{
 			SessionName: codeSession,
+			Model:       codeModel,
 		}
 		if err := code.Run(cmd.Context(), cfg); err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
@@ -31,5 +34,6 @@ var codeCmd = &cobra.Command{
 
 func init() {
 	codeCmd.Flags().StringVar(&codeSession, "session", "", "Use a named session for persistence")
+	codeCmd.Flags().StringVar(&codeModel, "model", "", "Override the model for this session")
 	rootCmd.AddCommand(codeCmd)
 }

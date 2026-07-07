@@ -16,17 +16,22 @@ import (
 	"github.com/cycl0o0/GPTerminal/internal/mcp"
 	"github.com/cycl0o0/GPTerminal/internal/session"
 	"github.com/cycl0o0/GPTerminal/internal/system"
+	"github.com/cycl0o0/GPTerminal/internal/usage"
 	openai "github.com/sashabaranov/go-openai"
 )
 
 type Config struct {
 	SessionName string
+	Model       string // optional in-memory model override
 }
 
 func Run(ctx context.Context, cfg Config) error {
 	client, err := ai.NewClient()
 	if err != nil {
 		return err
+	}
+	if cfg.Model != "" {
+		config.SetActiveModel(cfg.Model)
 	}
 
 	sysInfo := system.Detect()
@@ -46,50 +51,72 @@ func Run(ctx context.Context, cfg Config) error {
 
 	projectCtx := gatherProjectContext(cwd)
 
-	printBanner(cwd)
+	printBanner(cwd, client.ProviderName(), cfg.SessionName)
 
 	messages, transcript := loadCodeSession(sysInfo, projectCtx, cfg.SessionName)
 
-	reader := bufio.NewReader(os.Stdin)
+	approvalReader := bufio.NewReader(os.Stdin)
+	input := newInputReader()
 	autoApprove := false
 
+	const mainPrompt = "\033[1;36m>\033[0m "
+	const contPrompt = "\033[90m…\033[0m "
+
 	for {
-		fmt.Fprintf(os.Stderr, "\033[1;36m>\033[0m ")
-		input, err := reader.ReadString('\n')
-		if err != nil {
-			break
-		}
-		input = strings.TrimSpace(input)
-		if input == "" {
+		text, status := input.readLogicalLine(mainPrompt, contPrompt)
+		switch status {
+		case readEOF:
+			fmt.Fprintln(os.Stderr)
+			if cfg.SessionName != "" {
+				saveCodeSession(cfg.SessionName, messages, transcript)
+			}
+			return nil
+		case readCancel:
 			continue
 		}
 
-		if strings.HasPrefix(input, "/") {
-			quit := handleSlashCommand(input, &messages, &transcript, sysInfo, projectCtx, cwd, cfg.SessionName)
+		text = strings.TrimSpace(text)
+		if text == "" {
+			continue
+		}
+
+		if strings.HasPrefix(text, "/") {
+			quit := handleSlashCommand(slashCtx{
+				text:       text,
+				messages:   &messages,
+				transcript: &transcript,
+				sysInfo:    sysInfo,
+				projectCtx: projectCtx,
+				cwd:        cwd,
+				session:    cfg.SessionName,
+				provider:   client.ProviderName(),
+				reader:     approvalReader,
+			})
 			if quit {
-				break
+				if cfg.SessionName != "" {
+					saveCodeSession(cfg.SessionName, messages, transcript)
+				}
+				return nil
 			}
 			continue
 		}
 
 		messages = append(messages, openai.ChatCompletionMessage{
 			Role:    openai.ChatMessageRoleUser,
-			Content: input,
+			Content: text,
 		})
 		transcript = append(transcript, session.ChatMessage{
 			Role:      openai.ChatMessageRoleUser,
-			Content:   input,
+			Content:   text,
 			Timestamp: time.Now().Format("15:04"),
 		})
 
 		text, finalHistory, err := runner.Stream(ctx, messages, chatutil.StreamOptions{
 			AllowWriteTools: true,
+			LiveContent:     true,
 			OnThinking: func(t string) {
 				if strings.TrimSpace(t) != "" {
-					line := strings.TrimSpace(strings.ReplaceAll(t, "\n", " "))
-					if len(line) > 120 {
-						line = line[:120] + "..."
-					}
+					line := truncate(t, 160)
 					fmt.Fprintf(os.Stderr, "\033[35m⟡ %s\033[0m\n", line)
 				}
 			},
@@ -97,10 +124,10 @@ func Run(ctx context.Context, cfg Config) error {
 				fmt.Print(chunk)
 			},
 			OnToolCall: func(name, args string) {
-				fmt.Fprintf(os.Stderr, "\033[33m⚡ %s\033[0m\n", name)
+				fmt.Fprintf(os.Stderr, "\n\033[33m⚡ %s\033[0m\n", name)
 			},
 			OnToolResult: func(name, result string) {
-				fmt.Fprintf(os.Stderr, "\033[33m✓ %s done (%d chars)\033[0m\n", name, len(result))
+				fmt.Fprintf(os.Stderr, "\033[33m✓ %s\033[0m %s\n", name, firstLine(result, 140))
 			},
 			ApproveCommand: func(req chatutil.CommandApprovalRequest) (chatutil.ApprovalDecision, error) {
 				allowAuto := req.RiskErr == nil && req.Risk != nil && req.Risk.Score <= 7
@@ -128,7 +155,7 @@ func Run(ctx context.Context, cfg Config) error {
 					prompt = "Approve? [Y/n]: "
 				}
 				fmt.Fprint(os.Stderr, prompt)
-				answer, _ := reader.ReadString('\n')
+				answer, _ := approvalReader.ReadString('\n')
 				answer = strings.TrimSpace(strings.ToLower(answer))
 
 				switch answer {
@@ -148,7 +175,7 @@ func Run(ctx context.Context, cfg Config) error {
 				fmt.Fprintf(os.Stderr, "\n\033[1mFile:\033[0m %s\n", req.Path)
 				fmt.Fprintf(os.Stderr, "%s\n", req.Diff)
 				fmt.Fprint(os.Stderr, "Approve? [Y/n]: ")
-				answer, _ := reader.ReadString('\n')
+				answer, _ := approvalReader.ReadString('\n')
 				answer = strings.TrimSpace(strings.ToLower(answer))
 				if answer == "n" || answer == "no" {
 					return chatutil.ApprovalDecision{Approved: false}, nil
@@ -174,24 +201,38 @@ func Run(ctx context.Context, cfg Config) error {
 			saveCodeSession(cfg.SessionName, messages, transcript)
 		}
 	}
+}
 
-	if cfg.SessionName != "" {
-		saveCodeSession(cfg.SessionName, messages, transcript)
+func printBanner(cwd, provider, sessionName string) {
+	model := config.Model()
+	fmt.Fprintf(os.Stderr, "\033[1;36m╭───────────────────────────────────────╮\033[0m\n")
+	fmt.Fprintf(os.Stderr, "\033[1;36m│   GPTCode  —  coding agent            │\033[0m\n")
+	fmt.Fprintf(os.Stderr, "\033[1;36m╰───────────────────────────────────────╯\033[0m\n")
+	fmt.Fprintf(os.Stderr, "\033[90mProject:  %s\033[0m\n", cwd)
+	fmt.Fprintf(os.Stderr, "\033[90mModel:    %s (%s)\033[0m\n", model, provider)
+	if sessionName != "" {
+		fmt.Fprintf(os.Stderr, "\033[90mSession:  %s\033[0m\n", sessionName)
 	}
-	return nil
+	fmt.Fprintf(os.Stderr, "\033[90m/help for commands · Ctrl-D to exit · ↑/↓ history\033[0m\n\n")
 }
 
-func printBanner(cwd string) {
-	fmt.Fprintf(os.Stderr, "\033[1;36m╭─────────────────────────────────────╮\033[0m\n")
-	fmt.Fprintf(os.Stderr, "\033[1;36m│            GPTCode                  │\033[0m\n")
-	fmt.Fprintf(os.Stderr, "\033[1;36m│   Interactive Coding Assistant      │\033[0m\n")
-	fmt.Fprintf(os.Stderr, "\033[1;36m╰─────────────────────────────────────╯\033[0m\n")
-	fmt.Fprintf(os.Stderr, "\033[90mProject: %s\033[0m\n", cwd)
-	fmt.Fprintf(os.Stderr, "\033[90mType /help for commands, /quit to exit\033[0m\n\n")
+type slashCtx struct {
+	text       string
+	messages   *[]openai.ChatCompletionMessage
+	transcript *[]session.ChatMessage
+	sysInfo    system.SystemInfo
+	projectCtx string
+	cwd        string
+	session    string
+	provider   string
+	reader     *bufio.Reader
 }
 
-func handleSlashCommand(input string, messages *[]openai.ChatCompletionMessage, transcript *[]session.ChatMessage, sysInfo system.SystemInfo, projectCtx, cwd, sessionName string) bool {
-	parts := strings.Fields(input)
+func handleSlashCommand(c slashCtx) bool {
+	parts := splitCmd(c.text)
+	if len(parts) == 0 {
+		return false
+	}
 	cmd := strings.ToLower(parts[0])
 
 	switch cmd {
@@ -201,26 +242,77 @@ func handleSlashCommand(input string, messages *[]openai.ChatCompletionMessage, 
 
 	case "/help", "/h":
 		fmt.Fprintf(os.Stderr, "\033[1mGPTCode Commands:\033[0m\n")
-		fmt.Fprintf(os.Stderr, "  /help       Show this help\n")
-		fmt.Fprintf(os.Stderr, "  /clear      Clear conversation and start fresh\n")
-		fmt.Fprintf(os.Stderr, "  /compact    Summarize conversation to reduce context\n")
-		fmt.Fprintf(os.Stderr, "  /diff       Show git diff of changes in the project\n")
-		fmt.Fprintf(os.Stderr, "  /status     Show git status\n")
-		fmt.Fprintf(os.Stderr, "  /undo       Undo last git change (git checkout -- .)\n")
-		fmt.Fprintf(os.Stderr, "  /quit       Exit GPTCode\n")
+		fmt.Fprintf(os.Stderr, "  /help            Show this help\n")
+		fmt.Fprintf(os.Stderr, "  /clear           Clear conversation and start fresh\n")
+		fmt.Fprintf(os.Stderr, "  /compact         Summarize conversation to reduce context\n")
+		fmt.Fprintf(os.Stderr, "  /model [name]    Show or switch the model for this session\n")
+		fmt.Fprintf(os.Stderr, "  /tokens          Show token usage and estimated cost\n")
+		fmt.Fprintf(os.Stderr, "  /add <path>      Add a file's contents to the conversation\n")
+		fmt.Fprintf(os.Stderr, "  /diff            Show git diff of changes in the project\n")
+		fmt.Fprintf(os.Stderr, "  /status          Show git status\n")
+		fmt.Fprintf(os.Stderr, "  /revert <path>   Revert one file via git checkout (asks first)\n")
+		fmt.Fprintf(os.Stderr, "  /quit            Exit GPTCode\n")
 
 	case "/clear":
-		*messages = []openai.ChatCompletionMessage{
-			{Role: openai.ChatMessageRoleSystem, Content: ai.CodeSystemPrompt(sysInfo.ContextBlock(), projectCtx)},
+		*c.messages = []openai.ChatCompletionMessage{
+			{Role: openai.ChatMessageRoleSystem, Content: ai.CodeSystemPrompt(c.sysInfo.ContextBlock(), c.projectCtx)},
 		}
-		*transcript = nil
+		*c.transcript = nil
 		fmt.Fprintf(os.Stderr, "\033[90mConversation cleared.\033[0m\n")
 
 	case "/compact":
-		compactConversation(messages, sysInfo, projectCtx)
+		compactConversation(c.messages, c.sysInfo, c.projectCtx)
+
+	case "/model":
+		if len(parts) < 2 {
+			fmt.Fprintf(os.Stderr, "\033[90mCurrent model: %s (%s)\033[0m\n", config.Model(), c.provider)
+			return false
+		}
+		config.SetActiveModel(parts[1])
+		fmt.Fprintf(os.Stderr, "\033[32mModel set to %s for this session.\033[0m\n", config.Model())
+
+	case "/tokens":
+		u := usage.Global().CurrentUsage()
+		fmt.Fprintf(os.Stderr, "\033[1mUsage (%s):\033[0m\n", u.Month)
+		fmt.Fprintf(os.Stderr, "  Input tokens:  %s\n", comma(u.InputTokens))
+		fmt.Fprintf(os.Stderr, "  Output tokens: %s\n", comma(u.OutputTokens))
+		fmt.Fprintf(os.Stderr, "  Estimated cost: $%.4f (images $%.4f)\n", u.TotalCost, u.ImageCost)
+		fmt.Fprintf(os.Stderr, "\033[90mModel: %s (%s)\033[0m\n", config.Model(), c.provider)
+
+	case "/add":
+		if len(parts) < 2 {
+			fmt.Fprintf(os.Stderr, "\033[31mUsage: /add <path>\033[0m\n")
+			return false
+		}
+		path := strings.Join(parts[1:], " ")
+		full, err := resolveInside(c.cwd, path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\033[31m%s\033[0m\n", err)
+			return false
+		}
+		data, err := os.ReadFile(full)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\033[31mError: %v\033[0m\n", err)
+			return false
+		}
+		content := string(data)
+		if len(content) > 20000 {
+			content = content[:20000] + "\n...[truncated]"
+		}
+		rel, _ := filepath.Rel(c.cwd, full)
+		*c.messages = append(*c.messages, openai.ChatCompletionMessage{
+			Role:    openai.ChatMessageRoleUser,
+			Content: fmt.Sprintf("Here are the full contents of %s for reference:\n\n```\n%s\n```", rel, content),
+		})
+		*c.transcript = append(*c.transcript, session.ChatMessage{
+			Role:      openai.ChatMessageRoleUser,
+			Content:   fmt.Sprintf("[added file %s]", rel),
+			Timestamp: time.Now().Format("15:04"),
+		})
+		fmt.Fprintf(os.Stderr, "\033[32mAdded %s (%d bytes) to context.\033[0m\n", rel, len(data))
 
 	case "/diff":
-		out, err := runGitCommand(cwd, "diff")
+		out, err := runGitCommand(c.cwd, "diff")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "\033[31mError: %v\033[0m\n", err)
 		} else if strings.TrimSpace(out) == "" {
@@ -230,7 +322,7 @@ func handleSlashCommand(input string, messages *[]openai.ChatCompletionMessage, 
 		}
 
 	case "/status":
-		out, err := runGitCommand(cwd, "status", "--short")
+		out, err := runGitCommand(c.cwd, "status", "--short")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "\033[31mError: %v\033[0m\n", err)
 		} else if strings.TrimSpace(out) == "" {
@@ -239,23 +331,33 @@ func handleSlashCommand(input string, messages *[]openai.ChatCompletionMessage, 
 			fmt.Println(out)
 		}
 
-	case "/undo":
-		fmt.Fprint(os.Stderr, "\033[33mThis will discard all unstaged changes. Continue? [y/N]: \033[0m")
-		reader := bufio.NewReader(os.Stdin)
-		answer, _ := reader.ReadString('\n')
+	case "/revert":
+		if len(parts) < 2 {
+			fmt.Fprintf(os.Stderr, "\033[31mUsage: /revert <path>\033[0m\n")
+			return false
+		}
+		path := strings.Join(parts[1:], " ")
+		fmt.Fprintf(os.Stderr, "\033[33mRevert %s (git checkout -- %s)? [y/N]: \033[0m", path, path)
+		answer, _ := c.reader.ReadString('\n')
 		answer = strings.TrimSpace(strings.ToLower(answer))
-		if answer == "y" || answer == "yes" {
-			out, err := runGitCommand(cwd, "checkout", "--", ".")
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "\033[31mError: %v\033[0m\n", err)
-			} else {
-				fmt.Fprintf(os.Stderr, "\033[32mChanges reverted.\033[0m\n")
-				if strings.TrimSpace(out) != "" {
-					fmt.Println(out)
-				}
-			}
-		} else {
+		if answer != "y" && answer != "yes" {
 			fmt.Fprintf(os.Stderr, "\033[90mCancelled.\033[0m\n")
+			return false
+		}
+		args, perr := chatSplitForGit(path)
+		if perr != nil {
+			fmt.Fprintf(os.Stderr, "\033[31m%s\033[0m\n", perr)
+			return false
+		}
+		gitArgs := append([]string{"checkout", "--"}, args...)
+		out, err := runGitCommand(c.cwd, gitArgs...)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\033[31mError: %v\033[0m\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "\033[32mReverted %s.\033[0m\n", path)
+			if strings.TrimSpace(out) != "" {
+				fmt.Println(out)
+			}
 		}
 
 	default:
@@ -353,7 +455,35 @@ func gatherProjectContext(cwd string) string {
 		}
 	}
 
+	ctx.WriteString(loadProjectInstructions(cwd))
+
 	return ctx.String()
+}
+
+// loadProjectInstructions reads the first present agent-instruction file from
+// the project root (AGENTS.md, CLAUDE.md, GPTERMINAL.md, .cursorrules,
+// .windsurfrules) and returns it as a bounded context block.
+func loadProjectInstructions(cwd string) string {
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md", "GPTERMINAL.md", ".cursorrules", ".windsurfrules"} {
+		path := filepath.Join(cwd, name)
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		content := strings.TrimSpace(string(data))
+		if content == "" {
+			continue
+		}
+		if len(content) > 4000 {
+			content = content[:4000] + "\n...[truncated]"
+		}
+		return fmt.Sprintf("\nProject instructions (%s):\n%s\n", name, content)
+	}
+	return ""
 }
 
 func loadCodeSession(sysInfo system.SystemInfo, projectCtx, sessionName string) ([]openai.ChatCompletionMessage, []session.ChatMessage) {
@@ -404,4 +534,126 @@ func truncate(s string, max int) string {
 		return s[:max] + "..."
 	}
 	return s
+}
+
+func firstLine(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	if len(s) > max {
+		s = s[:max] + "..."
+	}
+	if s == "" {
+		return "(no output)"
+	}
+	return s
+}
+
+func comma(n int) string {
+	s := fmt.Sprintf("%d", n)
+	if len(s) <= 3 {
+		return s
+	}
+	var b strings.Builder
+	pre := len(s) % 3
+	if pre > 0 {
+		b.WriteString(s[:pre])
+		if len(s) > pre {
+			b.WriteByte(',')
+		}
+	}
+	for i := pre; i < len(s); i += 3 {
+		b.WriteString(s[i : i+3])
+		if i+3 < len(s) {
+			b.WriteByte(',')
+		}
+	}
+	return b.String()
+}
+
+// splitCmd splits a slash-command line into tokens, honoring quoted args.
+func splitCmd(line string) []string {
+	parts, err := splitQuoted(strings.TrimSpace(line))
+	if err != nil || len(parts) == 0 {
+		return strings.Fields(line)
+	}
+	return parts
+}
+
+// chatSplitForGit splits a path arg honoring quotes, for /revert.
+func chatSplitForGit(s string) ([]string, error) {
+	return splitQuoted(s)
+}
+
+// splitQuoted is a shell-like splitter that honors single/double quotes and
+// backslash escapes (no operator rejection — used for slash-command args).
+func splitQuoted(s string) ([]string, error) {
+	var args []string
+	var cur strings.Builder
+	haveTok := false
+	inSingle, inDouble := false, false
+	flush := func() {
+		if haveTok {
+			args = append(args, cur.String())
+			cur.Reset()
+			haveTok = false
+		}
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case inSingle:
+			if c == '\'' {
+				inSingle = false
+			} else {
+				cur.WriteByte(c)
+			}
+		case inDouble:
+			if c == '"' {
+				inDouble = false
+			} else if c == '\\' && i+1 < len(s) {
+				cur.WriteByte(s[i+1])
+				i++
+			} else {
+				cur.WriteByte(c)
+			}
+		case c == '\'':
+			inSingle = true
+			haveTok = true
+		case c == '"':
+			inDouble = true
+			haveTok = true
+		case c == '\\':
+			if i+1 < len(s) {
+				cur.WriteByte(s[i+1])
+				i++
+				haveTok = true
+			}
+		case c == ' ' || c == '\t':
+			flush()
+		default:
+			cur.WriteByte(c)
+			haveTok = true
+		}
+	}
+	if inSingle || inDouble {
+		return nil, fmt.Errorf("unterminated quote")
+	}
+	flush()
+	return args, nil
+}
+
+// resolveInside resolves p under cwd, rejecting escapes.
+func resolveInside(cwd, p string) (string, error) {
+	cleaned := filepath.Clean(p)
+	if filepath.IsAbs(cleaned) {
+		return "", fmt.Errorf("absolute paths are not allowed")
+	}
+	full := filepath.Join(cwd, cleaned)
+	rel, err := filepath.Rel(cwd, full)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("path %q escapes the project directory", p)
+	}
+	return full, nil
 }
