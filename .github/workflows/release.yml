@@ -49,7 +49,10 @@ jobs:
         run: |
           bin="gpterminal-${{ matrix.goos }}-${{ matrix.goarch }}"
           ext=""; if [ "${{ matrix.goos }}" = "windows" ]; then ext=".exe"; fi
-          go build -ldflags="-s -w" -o "${bin}${ext}" .
+          # GITHUB_REF_NAME is the pushed tag (e.g. v3.2.1); strip the leading v
+          # and inject it so the binary reports its real release version.
+          version="${GITHUB_REF_NAME#v}"
+          go build -ldflags="-s -w -X github.com/cycl0o0/GPTerminal/cmd.Version=${version}" -o "${bin}${ext}" .
           tar czf "${bin}.tar.gz" "${bin}${ext}" LICENSE
 
       - name: Upload artifact

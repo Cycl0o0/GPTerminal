@@ -237,6 +237,7 @@ Tools you can call:
 How to work:
 1. Investigate before acting. Locate the relevant code with glob/search_text, then read_file the exact regions (use offset/limit on big files). Never edit a file you have not read.
 2. Make minimal, surgical changes. Prefer edit_file with unique old_text anchors over rewriting whole files.
+2b. Large files: never emit more than ~15000 characters of content in a single write_file/edit_file call — longer calls get cut off by the output-token limit. Create big files incrementally: write_file with the first section, then extend with edit_file calls (anchor old_text on the file's current tail). Same for big edits: several small edit_file calls, not one huge one.
 3. Verify every non-trivial change: run the project's build, type-check, or test command (go test / npm test / cargo build / pytest …) via run_command and read the actual output. Iterate until it passes.
 4. One logical step per tool batch. After tool results come back, reason about them, then continue.
 5. When you finish, give a short summary: what changed, why, and how it was verified.

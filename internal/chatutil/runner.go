@@ -632,6 +632,13 @@ func chatTools(allowWrite bool) []openai.Tool {
 }
 
 func (r *Runner) executeToolCall(ctx context.Context, call openai.ToolCall, opts StreamOptions) string {
+	// A tool call whose arguments JSON is incomplete almost always means the
+	// model hit the output-token limit mid-generation (e.g. a huge write_file
+	// for a whole file). Return a clear, actionable error so the model splits
+	// the work instead of resending the same oversized call in a loop.
+	if call.Function.Arguments != "" && !json.Valid([]byte(call.Function.Arguments)) {
+		return truncatedArgsMessage(call.Function.Name, call.Function.Arguments)
+	}
 	switch call.Function.Name {
 	case "read_file":
 		var args struct {
@@ -1610,6 +1617,20 @@ func (r *Runner) validateCommandArgs(args []string) error {
 		}
 	}
 	return nil
+}
+
+// truncatedArgsMessage builds the tool result returned when a tool call's
+// arguments JSON is invalid because the model's output was cut off by the
+// token limit. It tells the model exactly how to recover: emit less content
+// per call and assemble the file incrementally.
+func truncatedArgsMessage(toolName, args string) string {
+	return fmt.Sprintf(
+		"Error: the %s call was cut off by the output-token limit before its arguments finished streaming (received %d chars of incomplete JSON). "+
+			"Do NOT retry the same call with the same content — it will be cut off again. "+
+			"Instead, split the work: create the file with write_file containing only the first part of the content, "+
+			"then append the remaining parts with edit_file (matching the current tail of the file as old_text). "+
+			"Keep each call's content well under the limit (aim for < 15000 characters per call).",
+		toolName, len(args))
 }
 
 func truncateText(s string, limit int) string {

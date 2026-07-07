@@ -6,7 +6,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const Version = "3.0.0"
+// Version is the GPTerminal version. It defaults to "dev" for local builds;
+// release binaries override it via -ldflags "-X ...cmd.Version=<tag>" in the
+// release workflow. It must be a var (not const) because the linker -X flag
+// can only set string variables. Never edit this string to version a release
+// — the tag + ldflags is the source of truth.
+var Version = "dev"
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
