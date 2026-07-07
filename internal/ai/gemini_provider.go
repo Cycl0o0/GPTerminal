@@ -287,43 +287,59 @@ func (p *GeminiProvider) convertResponse(resp *genai.GenerateContentResponse, mo
 }
 
 type geminiStream struct {
-	iter    *genai.GenerateContentResponseIterator
-	client  *genai.Client
-	callIdx int
+	iter      *genai.GenerateContentResponseIterator
+	client    *genai.Client
+	callIdx   int
+	truncated bool // last candidate hit MAX_TOKENS
+	done      bool // iterator exhausted; further Recv returns EOF
 }
 
 func (s *geminiStream) Recv() (ChatStreamEvent, error) {
+	if s.done {
+		return ChatStreamEvent{}, io.EOF
+	}
 	resp, err := s.iter.Next()
 	if err == iterator.Done {
+		s.done = true
 		s.client.Close()
+		// If the model was cut off by the output-length limit (typically mid
+		// function call, so no tool call was ever delivered), surface a marker
+		// instead of ending the turn empty.
+		if s.truncated {
+			s.truncated = false
+			return ChatStreamEvent{Content: "\n[output truncated by length limit — ask me to continue]"}, nil
+		}
 		return ChatStreamEvent{}, io.EOF
 	}
 	if err != nil {
+		s.done = true
 		s.client.Close()
 		return ChatStreamEvent{}, err
 	}
 
 	var evt ChatStreamEvent
 	for _, cand := range resp.Candidates {
-		if cand.Content == nil {
-			continue
-		}
-		for _, part := range cand.Content.Parts {
-			switch v := part.(type) {
-			case genai.Text:
-				evt.Content += string(v)
-			case genai.FunctionCall:
-				args, _ := json.Marshal(v.Args)
-				evt.ToolCalls = append(evt.ToolCalls, openai.ToolCall{
-					ID:   fmt.Sprintf("call_%d", s.callIdx),
-					Type: openai.ToolTypeFunction,
-					Function: openai.FunctionCall{
-						Name:      v.Name,
-						Arguments: string(args),
-					},
-				})
-				s.callIdx++
+		if cand.Content != nil {
+			for _, part := range cand.Content.Parts {
+				switch v := part.(type) {
+				case genai.Text:
+					evt.Content += string(v)
+				case genai.FunctionCall:
+					args, _ := json.Marshal(v.Args)
+					evt.ToolCalls = append(evt.ToolCalls, openai.ToolCall{
+						ID:   fmt.Sprintf("call_%d", s.callIdx),
+						Type: openai.ToolTypeFunction,
+						Function: openai.FunctionCall{
+							Name:      v.Name,
+							Arguments: string(args),
+						},
+					})
+					s.callIdx++
+				}
 			}
+		}
+		if cand.FinishReason == genai.FinishReasonMaxTokens {
+			s.truncated = true
 		}
 	}
 

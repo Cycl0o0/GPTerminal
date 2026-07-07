@@ -257,6 +257,9 @@ func (s *anthropicStream) Recv() (ChatStreamEvent, error) {
 			}, nil
 
 		case "message_stop":
+			if calls := s.flushPendingToolCalls(); len(calls) > 0 {
+				return ChatStreamEvent{ToolCalls: calls}, nil
+			}
 			return ChatStreamEvent{}, io.EOF
 		}
 	}
@@ -264,7 +267,42 @@ func (s *anthropicStream) Recv() (ChatStreamEvent, error) {
 	if err := s.stream.Err(); err != nil {
 		return ChatStreamEvent{}, err
 	}
+	if calls := s.flushPendingToolCalls(); len(calls) > 0 {
+		return ChatStreamEvent{ToolCalls: calls}, nil
+	}
 	return ChatStreamEvent{}, io.EOF
+}
+
+// flushPendingToolCalls finalizes any tool_use blocks that were started but
+// never closed — which happens when the stream ends mid-generation because
+// max_tokens was hit. Without this, an interrupted write_file/edit_file is
+// silently dropped and the turn ends empty ("the agent did nothing"). By
+// returning the (possibly partial) arguments, the runner surfaces a parse
+// error the model can recover from instead of vanishing.
+func (s *anthropicStream) flushPendingToolCalls() []openai.ToolCall {
+	if len(s.toolCalls) == 0 {
+		return nil
+	}
+	indexes := make([]int, 0, len(s.toolCalls))
+	for idx := range s.toolCalls {
+		indexes = append(indexes, idx)
+	}
+	sort.Ints(indexes)
+	calls := make([]openai.ToolCall, 0, len(indexes))
+	for _, idx := range indexes {
+		tc := s.toolCalls[idx]
+		if sb, ok := s.toolInputs[idx]; ok {
+			args := sb.String()
+			if args == "" {
+				args = "{}"
+			}
+			tc.Function.Arguments = args
+		}
+		calls = append(calls, *tc)
+	}
+	s.toolCalls = nil
+	s.toolInputs = nil
+	return calls
 }
 
 func (s *anthropicStream) Close() {
