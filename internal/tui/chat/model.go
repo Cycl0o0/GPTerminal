@@ -67,7 +67,7 @@ func NewModel(client *ai.Client, sysInfo system.SystemInfo, opts Options) Model 
 	ta.SetHeight(3)
 	ta.SetWidth(80)
 	ta.ShowLineNumbers = false
-	ta.CharLimit = 4096
+	ta.CharLimit = 0 // 0 = no cap; allow pasting/typing arbitrarily long prompts
 
 	renderer, _ := glamour.NewTermRenderer(
 		glamour.WithStylePath("dark"),

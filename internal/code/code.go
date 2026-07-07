@@ -296,8 +296,8 @@ func handleSlashCommand(c slashCtx) bool {
 			return false
 		}
 		content := string(data)
-		if len(content) > 20000 {
-			content = content[:20000] + "\n...[truncated]"
+		if len(content) > 500000 {
+			content = content[:500000] + "\n...[truncated]"
 		}
 		rel, _ := filepath.Rel(c.cwd, full)
 		*c.messages = append(*c.messages, openai.ChatCompletionMessage{
@@ -446,8 +446,8 @@ func gatherProjectContext(cwd string) string {
 			data, err := os.ReadFile(path)
 			if err == nil {
 				content := string(data)
-				if len(content) > 2000 {
-					content = content[:2000] + "\n...[truncated]"
+				if len(content) > 8000 {
+					content = content[:8000] + "\n...[truncated]"
 				}
 				ctx.WriteString(fmt.Sprintf("\n%s:\n%s\n", name, content))
 			}
@@ -478,8 +478,8 @@ func loadProjectInstructions(cwd string) string {
 		if content == "" {
 			continue
 		}
-		if len(content) > 4000 {
-			content = content[:4000] + "\n...[truncated]"
+		if len(content) > 16000 {
+			content = content[:16000] + "\n...[truncated]"
 		}
 		return fmt.Sprintf("\nProject instructions (%s):\n%s\n", name, content)
 	}

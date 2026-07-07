@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,13 +30,28 @@ import (
 )
 
 const (
-	maxToolRounds      = 50
-	maxToolOutputChars = 12000
-	maxReadFileChars   = 100000
-	maxListEntries     = 200
-	maxGlobResults     = 200
-	maxStdinBytes      = 100000
+	// defaultMaxToolRounds bounds a single agentic turn. It is intentionally
+	// high so long sessions don't get cut off, and it is overridable via the
+	// GPTERMINAL_MAX_TOOL_ROUNDS env var (0/unset uses this default). When the
+	// bound is reached the turn ends gracefully instead of erroring out.
+	defaultMaxToolRounds = 200
+	maxToolOutputChars   = 60000
+	maxReadFileChars     = 500000
+	maxListEntries       = 200
+	maxGlobResults       = 200
+	maxStdinBytes        = 2000000
 )
+
+// toolRoundLimit returns the per-turn tool-round bound, honoring the
+// GPTERMINAL_MAX_TOOL_ROUNDS env var when set to a positive integer.
+func toolRoundLimit() int {
+	if v := os.Getenv("GPTERMINAL_MAX_TOOL_ROUNDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultMaxToolRounds
+}
 
 type CommandApprovalRequest struct {
 	Command string
@@ -111,8 +127,9 @@ func (r *Runner) Complete(ctx context.Context, history []openai.ChatCompletionMe
 func (r *Runner) Stream(ctx context.Context, history []openai.ChatCompletionMessage, opts StreamOptions) (string, []openai.ChatCompletionMessage, error) {
 	messages := cloneMessages(history)
 	isOpenClaw := r.client.IsOpenClaw()
+	limit := toolRoundLimit()
 
-	for i := 0; i < maxToolRounds; i++ {
+	for i := 0; i < limit; i++ {
 		msg, err := r.streamAssistant(ctx, messages, opts)
 		if err != nil {
 			return "", messages, err
@@ -142,7 +159,11 @@ func (r *Runner) Stream(ctx context.Context, history []openai.ChatCompletionMess
 		}
 	}
 
-	return "", messages, fmt.Errorf("chat tool loop exceeded %d rounds", maxToolRounds)
+	// Turn hit the tool-round bound. End gracefully rather than erroring so a
+	// long session isn't aborted mid-flight; the user can ask the agent to
+	// continue from here.
+	notice := fmt.Sprintf("(reached the %d-round tool cap for this turn; ask me to continue)", limit)
+	return notice, messages, nil
 }
 
 func (r *Runner) streamAssistant(ctx context.Context, history []openai.ChatCompletionMessage, opts StreamOptions) (openai.ChatCompletionMessage, error) {

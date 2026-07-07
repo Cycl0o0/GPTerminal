@@ -12,7 +12,7 @@ import (
 const (
 	DefaultModel                = "gpt-4o-mini"
 	DefaultTemp                 = 0.7
-	DefaultMaxTokens            = 2048
+	DefaultMaxTokens            = 8192
 	DefaultCostLimit            = 0.0 // 0 = unlimited
 	DefaultWarnPct              = 80.0
 	DefaultImageModel           = "gpt-image-1"
