@@ -59,7 +59,7 @@ func (p *OpenClawProvider) wsURL() string {
 	return u
 }
 
-func (p *OpenClawProvider) ensureClient(ctx context.Context, eventCh chan<- chatEventMsg) (*gateway.Client, error) {
+func (p *OpenClawProvider) ensureClient(ctx context.Context, eventCh chan<- chatEventMsg, done <-chan struct{}) (*gateway.Client, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -75,11 +75,21 @@ func (p *OpenClawProvider) ensureClient(ctx context.Context, eventCh chan<- chat
 		gateway.WithScopes(protocol.ScopeOperatorRead, protocol.ScopeOperatorWrite),
 		gateway.WithCaps(protocol.ClientCapToolEvents),
 		gateway.WithOnEvent(func(ev protocol.Event) {
+			var msg chatEventMsg
 			switch ev.EventName {
 			case protocol.EventChat:
-				eventCh <- chatEventMsg{payload: ev.Payload, eventName: "chat"}
+				msg = chatEventMsg{payload: ev.Payload, eventName: "chat"}
 			case protocol.EventAgent:
-				eventCh <- chatEventMsg{payload: ev.Payload, eventName: "agent"}
+				msg = chatEventMsg{payload: ev.Payload, eventName: "agent"}
+			default:
+				return
+			}
+			// Deliver during the turn, but abort the send once the stream is
+			// closed so a post-turn event can never wedge the gateway's
+			// dispatch goroutine on a full buffered channel (the leak fix).
+			select {
+			case eventCh <- msg:
+			case <-done:
 			}
 		}),
 	)
@@ -146,8 +156,9 @@ func (p *OpenClawProvider) CreateChatCompletionStream(ctx context.Context, req o
 	}
 
 	eventCh := make(chan chatEventMsg, 64)
+	done := make(chan struct{})
 
-	client, err := p.ensureClient(ctx, eventCh)
+	client, err := p.ensureClient(ctx, eventCh, done)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +175,7 @@ func (p *OpenClawProvider) CreateChatCompletionStream(ctx context.Context, req o
 	return &openClawStream{
 		eventCh: eventCh,
 		client:  client,
-		done:    false,
+		doneCh:  done,
 	}, nil
 }
 
@@ -180,7 +191,9 @@ func (p *OpenClawProvider) ListModels(ctx context.Context) ([]string, error) {
 type openClawStream struct {
 	eventCh   <-chan chatEventMsg
 	client    *gateway.Client
+	doneCh    chan struct{} // closed by Close to abort in-flight event sends
 	done      bool
+	closeOnce sync.Once
 	prevText  string // accumulated text — used to compute incremental diff
 	seenTools int    // number of tool_use blocks already emitted
 }
@@ -341,5 +354,17 @@ func (s *openClawStream) Recv() (ChatStreamEvent, error) {
 }
 
 func (s *openClawStream) Close() {
-	s.done = true
+	s.closeOnce.Do(func() {
+		s.done = true
+		// Signal the OnEvent callback to abort any blocked send, then close the
+		// websocket so it stops firing entirely. Together these prevent the
+		// gateway dispatch goroutine and the connection from leaking after the
+		// turn ends.
+		if s.doneCh != nil {
+			close(s.doneCh)
+		}
+		if s.client != nil {
+			s.client.Close()
+		}
+	})
 }

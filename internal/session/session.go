@@ -49,6 +49,18 @@ type AgentData struct {
 	Completed   bool                           `json:"completed"`
 	Summary     string                         `json:"summary"`
 	StepCount   int                            `json:"step_count"`
+	// Plan is the ordered task list produced in plan mode (empty for the
+	// classic flat agent loop). PlanApproved records whether the user signed
+	// off on it before execution began.
+	Plan         []PlanStep `json:"plan,omitempty"`
+	PlanApproved bool       `json:"plan_approved,omitempty"`
+}
+
+// PlanStep is one item in an agent's approved plan.
+type PlanStep struct {
+	Title  string `json:"title"`
+	Detail string `json:"detail,omitempty"`
+	Status string `json:"status,omitempty"` // pending | in_progress | done | skipped
 }
 
 type Record struct {
@@ -127,7 +139,35 @@ func Save(record *Record) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o600)
+
+	// Atomic write: an interrupt mid-write would otherwise leave partial JSON
+	// that fails to parse on the next load and silently discards the whole
+	// session. Write to a temp file in the same dir, then rename over the
+	// target (rename is atomic on the same filesystem).
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".session-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 func Load(name string) (*Record, error) {
@@ -177,7 +217,9 @@ func List() ([]Entry, error) {
 
 		record, err := Load(strings.TrimSuffix(entry.Name(), ".json"))
 		if err != nil {
-			return nil, err
+			// Skip an unreadable/corrupt session file rather than aborting the
+			// whole listing — one bad file must not hide every other session.
+			continue
 		}
 		out = append(out, entryFromRecord(record))
 	}

@@ -442,7 +442,10 @@ func (r *runner) executeCommand(command string) (system.ExecResult, error) {
 }
 
 func (r *runner) executeCD(command string) (system.ExecResult, error) {
-	script := command + "\nstatus=$?\nif [ $status -ne 0 ]; then exit $status; fi\nprintf '" + cwdMarker + "%s\\n' \"$PWD\"\n"
+	// Use a private variable name, not `status`: in zsh `status` is a
+	// read-only special parameter, so `status=$?` aborts with
+	// "read-only variable: status" and the cd is reported as failed.
+	script := command + "\n__gptdo_rc=$?\nif [ $__gptdo_rc -ne 0 ]; then exit $__gptdo_rc; fi\nprintf '" + cwdMarker + "%s\\n' \"$PWD\"\n"
 
 	result, err := system.ExecuteCaptureInDir(script, r.cwd)
 	if err != nil {

@@ -12,9 +12,14 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const repoAPI = "https://api.github.com/repos/Cycl0o0/GPTerminal/releases/latest"
+
+// httpClient bounds every update request so a hung connection can't stall the
+// CLI indefinitely (the default client has no timeout).
+var httpClient = &http.Client{Timeout: 60 * time.Second}
 
 type Release struct {
 	TagName string  `json:"tag_name"`
@@ -37,7 +42,8 @@ type CheckResult struct {
 }
 
 func Check(currentVersion string) (*CheckResult, error) {
-	resp, err := http.Get(repoAPI)
+	cleanupOldBinary() // remove a prior Windows update's <exe>.old, if any
+	resp, err := httpClient.Get(repoAPI)
 	if err != nil {
 		return nil, fmt.Errorf("check for updates: %w", err)
 	}
@@ -89,7 +95,7 @@ func Apply(result *CheckResult) error {
 		return fmt.Errorf("no download URL available for %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
 
-	resp, err := http.Get(result.DownloadURL)
+	resp, err := httpClient.Get(result.DownloadURL)
 	if err != nil {
 		return fmt.Errorf("download update: %w", err)
 	}
@@ -131,12 +137,42 @@ func Apply(result *CheckResult) error {
 	}
 	tmpFile.Close()
 
+	// Windows cannot rename over a running .exe (Access Denied). Move the
+	// current binary aside first, then rename the new one into place; the old
+	// file is deleted on the next run (a running image can still be renamed).
+	if runtime.GOOS == "windows" {
+		oldPath := execPath + ".old"
+		_ = os.Remove(oldPath) // clean up a prior update's leftover
+		if err := os.Rename(execPath, oldPath); err != nil {
+			os.Remove(tmpPath)
+			return fmt.Errorf("move current binary aside: %w", err)
+		}
+		if err := os.Rename(tmpPath, execPath); err != nil {
+			// Roll back so the CLI still works.
+			_ = os.Rename(oldPath, execPath)
+			os.Remove(tmpPath)
+			return fmt.Errorf("replace binary: %w", err)
+		}
+		return nil
+	}
+
 	if err := os.Rename(tmpPath, execPath); err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("replace binary: %w", err)
 	}
 
 	return os.Chmod(execPath, 0755)
+}
+
+// cleanupOldBinary removes the <exe>.old file left by a prior Windows update.
+// Safe to call at startup; a no-op on other platforms and when absent.
+func cleanupOldBinary() {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	if exe, err := os.Executable(); err == nil {
+		_ = os.Remove(exe + ".old")
+	}
 }
 
 // extractBinaryFromTarGz reads a .tar.gz stream and returns a reader for the

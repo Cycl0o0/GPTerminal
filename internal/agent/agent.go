@@ -17,16 +17,34 @@ import (
 )
 
 const (
-	defaultMaxSteps     = 50
-	doneMarker          = "[AGENT_DONE]"
-	autoAcceptMaxRisk   = 7
+	defaultMaxSteps   = 50
+	doneMarker        = "[AGENT_DONE]"
+	autoAcceptMaxRisk = 7
 )
 
 type Config struct {
-	Objective   string
-	SessionName string
-	MaxSteps    int
-	AutoApprove bool
+	Objective    string
+	SessionName  string
+	MaxSteps     int
+	AutoApprove  bool
+	Plan         bool   // when true, generate + approve a plan before executing
+	ApprovalMode string // plan | default | auto-edit | yolo (overrides config)
+}
+
+// isDone reports whether the assistant signaled completion. The marker must
+// appear on its own line (optionally with surrounding whitespace) so a model
+// merely quoting the marker while explaining itself doesn't end the run early.
+func isDone(text string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		if strings.TrimSpace(line) == doneMarker {
+			return true
+		}
+		// Also accept "[AGENT_DONE] <summary...>" as a line prefix.
+		if strings.HasPrefix(strings.TrimSpace(line), doneMarker) {
+			return true
+		}
+	}
+	return false
 }
 
 func Run(ctx context.Context, cfg Config) error {
@@ -59,7 +77,25 @@ func Run(ctx context.Context, cfg Config) error {
 		{Role: openai.ChatMessageRoleUser, Content: cfg.Objective},
 	}
 
-	return runLoop(ctx, runner, messages, cfg, cwd, 0)
+	// A single stdin reader is shared across the plan and execution phases;
+	// two separate bufio.Readers would let the first's read-ahead swallow bytes
+	// the second needs (breaking piped approvals).
+	reader := bufio.NewReader(os.Stdin)
+
+	// Plan mode: produce a plan the user approves before any execution.
+	if cfg.Plan {
+		approved, planMsgs, err := runPlanPhase(ctx, runner, cfg, cwd, reader)
+		if err != nil {
+			return err
+		}
+		if !approved {
+			fmt.Fprintln(os.Stderr, "Plan rejected. Nothing was executed.")
+			return nil
+		}
+		messages = append(messages, planMsgs...)
+	}
+
+	return runLoop(ctx, runner, reader, messages, cfg, cwd, 0)
 }
 
 func Resume(ctx context.Context, sessionName string) error {
@@ -109,18 +145,23 @@ func Resume(ctx context.Context, sessionName string) error {
 		Content: "Continue where you left off. If all steps are complete, include [AGENT_DONE] and a summary.",
 	})
 
-	return runLoop(ctx, runner, messages, cfg, record.Agent.CWD, record.Agent.StepCount)
+	return runLoop(ctx, runner, bufio.NewReader(os.Stdin), messages, cfg, record.Agent.CWD, record.Agent.StepCount)
 }
 
-func runLoop(ctx context.Context, runner *chatutil.Runner, messages []openai.ChatCompletionMessage, cfg Config, cwd string, startStep int) error {
-	reader := bufio.NewReader(os.Stdin)
+func runLoop(ctx context.Context, runner *chatutil.Runner, reader *bufio.Reader, messages []openai.ChatCompletionMessage, cfg Config, cwd string, startStep int) error {
 	autoApprove := cfg.AutoApprove
+
+	approvalMode := chatutil.ParseApprovalMode(config.ApprovalMode())
+	if cfg.ApprovalMode != "" {
+		approvalMode = chatutil.ParseApprovalMode(cfg.ApprovalMode)
+	}
 
 	for step := startStep; step < cfg.MaxSteps; step++ {
 		fmt.Fprintf(os.Stderr, "\n\033[1;34m[Agent Step %d]\033[0m\n", step+1)
 
 		text, finalHistory, err := runner.Stream(ctx, messages, chatutil.StreamOptions{
 			AllowWriteTools: true,
+			ApprovalMode:    approvalMode,
 			OnThinking: func(t string) {
 				if strings.TrimSpace(t) != "" {
 					line := strings.TrimSpace(strings.ReplaceAll(t, "\n", " "))
@@ -169,7 +210,11 @@ func runLoop(ctx context.Context, runner *chatutil.Runner, messages []openai.Cha
 					prompt = "Approve? [Y/n]: "
 				}
 				fmt.Fprint(os.Stderr, prompt)
-				answer, _ := reader.ReadString('\n')
+				answer, readErr := reader.ReadString('\n')
+				if readErr != nil {
+					// EOF/read failure: fail closed, never silently approve.
+					return chatutil.ApprovalDecision{Approved: false}, nil
+				}
 				answer = strings.TrimSpace(strings.ToLower(answer))
 
 				switch answer {
@@ -181,15 +226,20 @@ func runLoop(ctx context.Context, runner *chatutil.Runner, messages []openai.Cha
 					return chatutil.ApprovalDecision{Approved: true}, nil
 				case "n", "no":
 					return chatutil.ApprovalDecision{Approved: false}, nil
-				default:
+				case "y", "yes", "":
 					return chatutil.ApprovalDecision{Approved: true}, nil
+				default:
+					return chatutil.ApprovalDecision{Approved: false}, nil
 				}
 			},
 			ApproveFileWrite: func(req chatutil.FileWriteApprovalRequest) (chatutil.ApprovalDecision, error) {
 				fmt.Fprintf(os.Stderr, "\n\033[1mProposed file write:\033[0m %s\n", req.Path)
 				fmt.Fprintf(os.Stderr, "%s\n", req.Diff)
 				fmt.Fprint(os.Stderr, "Approve file write? [Y/n]: ")
-				answer, _ := reader.ReadString('\n')
+				answer, readErr := reader.ReadString('\n')
+				if readErr != nil {
+					return chatutil.ApprovalDecision{Approved: false}, nil
+				}
 				answer = strings.TrimSpace(strings.ToLower(answer))
 				if answer == "n" || answer == "no" {
 					return chatutil.ApprovalDecision{Approved: false}, nil
@@ -205,8 +255,8 @@ func runLoop(ctx context.Context, runner *chatutil.Runner, messages []openai.Cha
 
 		messages = finalHistory
 
-		// Check for done marker
-		if strings.Contains(text, doneMarker) {
+		// Check for done marker (on its own line, to avoid false positives).
+		if isDone(text) {
 			summary := extractSummary(text)
 			fmt.Fprintf(os.Stderr, "\n\033[1;32m[Agent Complete]\033[0m\n")
 			if summary != "" {
@@ -262,5 +312,45 @@ func extractSummary(text string) string {
 	}
 	summary := strings.TrimSpace(text[idx+len(doneMarker):])
 	return summary
+}
+
+// runPlanPhase asks the model to produce a step-by-step plan for the objective
+// WITHOUT executing anything (read-only via ApprovalPlan), prints it, and asks
+// the user to approve. On approval it returns messages that seed the execution
+// loop with the agreed plan so the model executes it directly.
+func runPlanPhase(ctx context.Context, runner *chatutil.Runner, cfg Config, cwd string, reader *bufio.Reader) (bool, []openai.ChatCompletionMessage, error) {
+	fmt.Fprintf(os.Stderr, "\n\033[1;34m[Planning]\033[0m Generating a plan (read-only)…\n")
+
+	planMessages := []openai.ChatCompletionMessage{
+		{Role: openai.ChatMessageRoleSystem, Content: ai.AgentSystemPrompt(system.Detect().ContextBlock())},
+		{Role: openai.ChatMessageRoleUser, Content: "Objective: " + cfg.Objective + "\n\nProduce a concise numbered plan of the concrete steps you will take to accomplish this. You may read/search files to inform the plan, but do NOT make any changes yet. End with the plan as a numbered list."},
+	}
+
+	planText, _, err := runner.Stream(ctx, planMessages, chatutil.StreamOptions{
+		AllowWriteTools: true,
+		ApprovalMode:    chatutil.ApprovalPlan, // read-only: mutations are refused
+		OnContent:       func(c string) { fmt.Print(c) },
+		OnToolCall:      func(name, _ string) { fmt.Fprintf(os.Stderr, "\033[33m[Tool] %s\033[0m\n", name) },
+	})
+	if err != nil {
+		return false, nil, err
+	}
+	fmt.Println()
+
+	fmt.Fprint(os.Stderr, "\n\033[1mApprove this plan and begin execution? [Y/n]: \033[0m")
+	answer, readErr := reader.ReadString('\n')
+	if readErr != nil {
+		return false, nil, nil // EOF: treat as not approved (fail closed)
+	}
+	answer = strings.TrimSpace(strings.ToLower(answer))
+	if answer == "n" || answer == "no" {
+		return false, nil, nil
+	}
+
+	seed := []openai.ChatCompletionMessage{
+		{Role: openai.ChatMessageRoleAssistant, Content: planText},
+		{Role: openai.ChatMessageRoleUser, Content: "The plan is approved. Execute it step by step now. Ask for approval before mutating commands or file writes as usual. When everything is complete, include [AGENT_DONE] on its own line followed by a short summary."},
+	}
+	return true, seed, nil
 }
 

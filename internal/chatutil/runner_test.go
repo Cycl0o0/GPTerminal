@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	openai "github.com/sashabaranov/go-openai"
 )
 
 func TestBuildUserMessage(t *testing.T) {
@@ -152,6 +154,42 @@ func TestReadFileOffsetLimit(t *testing.T) {
 	}
 	if !contains(out, "lines 2-3") {
 		t.Fatalf("expected header to show line range, got %q", out)
+	}
+}
+
+func TestMergeToolCallsKeepsDistinctIndexedCalls(t *testing.T) {
+	// Reproduces the Anthropic/Gemini collapse bug: providers emit each tool
+	// call as its own single-element event. Without a per-call Index they all
+	// map to slice position 0 and collapse into one corrupted call. With Index
+	// set (the fix), each stays separate.
+	dest := map[int]*openai.ToolCall{}
+
+	idx0, idx1 := 0, 1
+	mergeToolCalls(dest, []openai.ToolCall{{
+		Index:    &idx0,
+		ID:       "call_a",
+		Type:     openai.ToolTypeFunction,
+		Function: openai.FunctionCall{Name: "read_file", Arguments: `{"path":"a.go"}`},
+	}})
+	mergeToolCalls(dest, []openai.ToolCall{{
+		Index:    &idx1,
+		ID:       "call_b",
+		Type:     openai.ToolTypeFunction,
+		Function: openai.FunctionCall{Name: "read_file", Arguments: `{"path":"b.go"}`},
+	}})
+
+	ordered := orderedToolCalls(dest)
+	if len(ordered) != 2 {
+		t.Fatalf("expected 2 distinct tool calls, got %d: %+v", len(ordered), ordered)
+	}
+	if ordered[0].ID != "call_a" || ordered[1].ID != "call_b" {
+		t.Fatalf("tool calls collapsed or reordered: %+v", ordered)
+	}
+	if ordered[0].Function.Arguments != `{"path":"a.go"}` {
+		t.Fatalf("first call args corrupted: %q", ordered[0].Function.Arguments)
+	}
+	if ordered[1].Function.Arguments != `{"path":"b.go"}` {
+		t.Fatalf("second call args corrupted: %q", ordered[1].Function.Arguments)
 	}
 }
 

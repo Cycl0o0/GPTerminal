@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -22,6 +23,14 @@ const (
 	DefaultT2SModel             = "gpt-4o-mini-tts"
 	DefaultT2SVoice             = "marin"
 	DefaultRealtimeSessionModel = "gpt-realtime"
+
+	// Agentic / TUI settings (v3.3).
+	DefaultApprovalMode = "default" // plan | default | auto-edit | yolo
+	DefaultEffort       = "none"    // none | minimal | low | medium | high | max
+	DefaultTheme        = "auto"    // auto | dark | light
+	DefaultTUIMode      = "auto"    // auto | on | off
+	DefaultMaxToolRounds = 0        // 0 = engine default (200)
+	DefaultAutoCompact  = false
 )
 
 func Init() {
@@ -43,6 +52,12 @@ func Init() {
 	viper.SetDefault("s2t_model", DefaultS2TModel)
 	viper.SetDefault("t2s_model", DefaultT2SModel)
 	viper.SetDefault("t2s_voice", DefaultT2SVoice)
+	viper.SetDefault("approval_mode", DefaultApprovalMode)
+	viper.SetDefault("effort", DefaultEffort)
+	viper.SetDefault("theme", DefaultTheme)
+	viper.SetDefault("tui", DefaultTUIMode)
+	viper.SetDefault("max_tool_rounds", DefaultMaxToolRounds)
+	viper.SetDefault("auto_compact", DefaultAutoCompact)
 
 	viper.SetEnvPrefix("OPENAI")
 	viper.BindEnv("api_key")
@@ -57,6 +72,11 @@ func Init() {
 	viper.BindEnv("openclaw_token", "OPENCLAW_TOKEN")
 	viper.BindEnv("openclaw_agent", "OPENCLAW_AGENT")
 	viper.BindEnv("openclaw_password", "OPENCLAW_PASSWORD")
+
+	viper.BindEnv("approval_mode", "GPTERMINAL_APPROVAL_MODE")
+	viper.BindEnv("effort", "GPTERMINAL_EFFORT")
+	viper.BindEnv("theme", "GPTERMINAL_THEME")
+	viper.BindEnv("tui", "GPTERMINAL_TUI")
 
 	_ = viper.ReadInConfig()
 }
@@ -199,18 +219,213 @@ func MCPServers() map[string]interface{} {
 	return viper.GetStringMap("mcp_servers")
 }
 
-// saveValue is a shared helper used by all Save* functions.
+// --- Agentic / TUI settings (v3.3) ---
+
+// ApprovalMode returns the configured approval policy: plan | default |
+// auto-edit | yolo. Unknown values fall back to "default".
+func ApprovalMode() string {
+	m := strings.ToLower(strings.TrimSpace(viper.GetString("approval_mode")))
+	switch m {
+	case "plan", "default", "auto-edit", "yolo":
+		return m
+	default:
+		return DefaultApprovalMode
+	}
+}
+
+// Effort returns the configured reasoning effort: none | minimal | low |
+// medium | high | max. Unknown values fall back to "none".
+func Effort() string {
+	e := strings.ToLower(strings.TrimSpace(viper.GetString("effort")))
+	switch e {
+	case "none", "minimal", "low", "medium", "high", "max":
+		return e
+	default:
+		return DefaultEffort
+	}
+}
+
+// Theme returns the UI theme preference: auto | dark | light.
+func Theme() string {
+	t := strings.ToLower(strings.TrimSpace(viper.GetString("theme")))
+	switch t {
+	case "auto", "dark", "light":
+		return t
+	default:
+		return DefaultTheme
+	}
+}
+
+// TUIMode returns whether the full-screen TUI should be used: auto | on | off.
+func TUIMode() string {
+	t := strings.ToLower(strings.TrimSpace(viper.GetString("tui")))
+	switch t {
+	case "auto", "on", "off":
+		return t
+	default:
+		return DefaultTUIMode
+	}
+}
+
+// MaxToolRounds returns the configured per-turn tool-round cap; 0 means "use
+// the engine default".
+func MaxToolRounds() int {
+	n := viper.GetInt("max_tool_rounds")
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
+// AutoCompact reports whether long sessions should be auto-summarized.
+func AutoCompact() bool {
+	return viper.GetBool("auto_compact")
+}
+
+// saveValue is a shared helper used by all string Save* functions.
 func saveValue(key, value string) error {
+	return saveAny(key, value)
+}
+
+// saveAny sets any value type (string/int/bool) and persists the config.
+//
+// It writes through a SEPARATE viper instance seeded only from the on-disk
+// file, not the global viper. This is deliberate: the global viper carries
+// process-only overrides (SetActiveModel/Effort/Provider) and env-derived
+// secrets in its override/env layers, and viper.WriteConfigAs serializes the
+// merged AllSettings() — so writing through the global viper would silently
+// persist a temporary /model override or an env API key to disk. Round-tripping
+// through a file-only instance keeps those out of the file while still updating
+// the live global value so the change takes effect immediately.
+func saveAny(key string, value any) error {
 	dir := ConfigDir()
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
-	viper.Set(key, value)
 	cfgFile := ConfigFile()
-	if err := viper.WriteConfigAs(cfgFile); err != nil {
+
+	disk := viper.New()
+	disk.SetConfigFile(cfgFile)
+	if err := disk.ReadInConfig(); err != nil && !os.IsNotExist(err) {
+		// A missing file is fine (first write); other read errors (corrupt
+		// YAML) must not be silently clobbered.
+		if _, statErr := os.Stat(cfgFile); statErr == nil {
+			return fmt.Errorf("read config before write: %w", err)
+		}
+	}
+	disk.Set(key, value)
+	if err := disk.WriteConfigAs(cfgFile); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
-	return os.Chmod(cfgFile, 0600)
+	if err := os.Chmod(cfgFile, 0600); err != nil {
+		return err
+	}
+	// Reflect the change in the live global viper so it takes effect now.
+	viper.Set(key, value)
+	return nil
+}
+
+// KeyKind classifies a settable config key for validation and display.
+type KeyKind int
+
+const (
+	KindString KeyKind = iota
+	KindInt
+	KindBool
+	KindFloat
+	KindEnum
+	KindSecret // string, but masked in listings
+)
+
+// KeyDef describes one user-settable config key. The registry drives the
+// generic `config get/set/list` CLI and the settings screens so every key is
+// defined in exactly one place.
+type KeyDef struct {
+	Key     string
+	Kind    KeyKind
+	Default string
+	Desc    string
+	Enum    []string // valid values when Kind == KindEnum
+}
+
+// SettableKeys is the registry of keys exposed via `config get/set/list`.
+// Provider credentials keep their dedicated set-* commands but are listed here
+// too (as secrets) so `config list` shows their state.
+var SettableKeys = []KeyDef{
+	{Key: "provider", Kind: KindEnum, Default: "openai", Desc: "AI provider", Enum: []string{"openai", "anthropic", "gemini", "openclaw"}},
+	{Key: "model", Kind: KindString, Default: DefaultModel, Desc: "Chat model"},
+	{Key: "temperature", Kind: KindFloat, Default: "0.7", Desc: "Sampling temperature (0.0-2.0)"},
+	{Key: "max_tokens", Kind: KindInt, Default: fmt.Sprintf("%d", DefaultMaxTokens), Desc: "Max completion tokens"},
+	{Key: "effort", Kind: KindEnum, Default: DefaultEffort, Desc: "Reasoning effort (provider-dependent)", Enum: []string{"none", "minimal", "low", "medium", "high", "max"}},
+	{Key: "approval_mode", Kind: KindEnum, Default: DefaultApprovalMode, Desc: "Tool approval policy", Enum: []string{"plan", "default", "auto-edit", "yolo"}},
+	{Key: "theme", Kind: KindEnum, Default: DefaultTheme, Desc: "UI theme", Enum: []string{"auto", "dark", "light"}},
+	{Key: "tui", Kind: KindEnum, Default: DefaultTUIMode, Desc: "Use full-screen TUI for code mode", Enum: []string{"auto", "on", "off"}},
+	{Key: "max_tool_rounds", Kind: KindInt, Default: "0", Desc: "Per-turn tool-round cap (0 = default 200)"},
+	{Key: "auto_compact", Kind: KindBool, Default: "false", Desc: "Auto-summarize long sessions"},
+	{Key: "cost_limit", Kind: KindFloat, Default: "0", Desc: "Monthly USD cost limit (0 = unlimited)"},
+	{Key: "warn_threshold", Kind: KindFloat, Default: "80", Desc: "Warn at this percent of cost limit"},
+	{Key: "api_base_url", Kind: KindString, Default: DefaultBaseURL, Desc: "OpenAI-compatible base URL"},
+	{Key: "api_key", Kind: KindSecret, Desc: "OpenAI API key"},
+	{Key: "anthropic_api_key", Kind: KindSecret, Desc: "Anthropic API key"},
+	{Key: "gemini_api_key", Kind: KindSecret, Desc: "Gemini API key"},
+	{Key: "image_model", Kind: KindString, Default: DefaultImageModel, Desc: "Image generation model"},
+	{Key: "image_size", Kind: KindString, Default: DefaultImageSize, Desc: "Image size"},
+}
+
+// LookupKey returns the KeyDef for a key name, or false if not settable.
+func LookupKey(key string) (KeyDef, bool) {
+	key = strings.ToLower(strings.TrimSpace(key))
+	for _, d := range SettableKeys {
+		if d.Key == key {
+			return d, true
+		}
+	}
+	return KeyDef{}, false
+}
+
+// GetValue returns the current string form of any key's value.
+func GetValue(key string) string {
+	return viper.GetString(strings.ToLower(strings.TrimSpace(key)))
+}
+
+// SetValue validates value against the key's KeyDef and persists it. It is the
+// backend for the generic `config set <key> <value>` command.
+func SetValue(key, value string) error {
+	def, ok := LookupKey(key)
+	if !ok {
+		return fmt.Errorf("unknown setting %q (run `gpterminal config list`)", key)
+	}
+	value = strings.TrimSpace(value)
+	switch def.Kind {
+	case KindInt:
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("%s must be an integer: %w", def.Key, err)
+		}
+		return saveAny(def.Key, n)
+	case KindBool:
+		b, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("%s must be true or false: %w", def.Key, err)
+		}
+		return saveAny(def.Key, b)
+	case KindFloat:
+		f, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return fmt.Errorf("%s must be a number: %w", def.Key, err)
+		}
+		return saveAny(def.Key, f)
+	case KindEnum:
+		lower := strings.ToLower(value)
+		for _, v := range def.Enum {
+			if v == lower {
+				return saveAny(def.Key, lower)
+			}
+		}
+		return fmt.Errorf("%s must be one of: %s", def.Key, strings.Join(def.Enum, ", "))
+	default:
+		return saveAny(def.Key, value)
+	}
 }
 
 func SaveProvider(provider string) error   { return saveValue("provider", provider) }
@@ -226,6 +441,27 @@ func SetActiveModel(model string) {
 		viper.Set("model", strings.TrimSpace(model))
 	}
 }
+
+// SetActiveEffort overrides the reasoning effort for the current process only
+// (no disk write), mirroring SetActiveModel.
+func SetActiveEffort(effort string) {
+	if strings.TrimSpace(effort) != "" {
+		viper.Set("effort", strings.TrimSpace(effort))
+	}
+}
+
+// SetActiveProvider overrides the provider for the current process only (no
+// disk write), used by serve mode's per-request provider selection.
+func SetActiveProvider(provider string) {
+	if strings.TrimSpace(provider) != "" {
+		viper.Set("provider", strings.ToLower(strings.TrimSpace(provider)))
+	}
+}
+
+// SaveApprovalMode / SaveEffort / SaveTheme persist agentic settings to disk.
+func SaveApprovalMode(mode string) error { return SetValue("approval_mode", mode) }
+func SaveEffort(effort string) error     { return SetValue("effort", effort) }
+func SaveTheme(theme string) error       { return SetValue("theme", theme) }
 func SaveAPIKey(key string) error            { return saveValue("api_key", key) }
 func SaveS2TModel(model string) error        { return saveValue("s2t_model", model) }
 func SaveT2SModel(model string) error        { return saveValue("t2s_model", model) }

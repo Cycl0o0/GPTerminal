@@ -368,10 +368,80 @@ func sortedKeys(m map[string]float64) []string {
 	return keys
 }
 
+// configGetCmd / configSetCmd / configListCmd are the generic, registry-driven
+// settings interface. They replace the need for a dedicated set-* command per
+// key (the older set-* commands are kept for backward compatibility).
+var configGetCmd = &cobra.Command{
+	Use:   "get <key>",
+	Short: "Print the current value of a setting",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		def, ok := config.LookupKey(args[0])
+		if !ok {
+			fmt.Fprintf(os.Stderr, "Unknown setting %q. Run `gpterminal config list`.\n", args[0])
+			os.Exit(1)
+		}
+		val := config.GetValue(def.Key)
+		if def.Kind == config.KindSecret {
+			val = maskKey(val)
+		}
+		fmt.Println(val)
+	},
+}
+
+var configSetCmd = &cobra.Command{
+	Use:   "set <key> <value>",
+	Short: "Set a configuration value (validated against the key's type)",
+	Args:  cobra.ExactArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		if err := config.SetValue(args[0], args[1]); err != nil {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Saved: %s = %s\n", args[0], args[1])
+	},
+}
+
+var configListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all settable configuration keys, their values, and descriptions",
+	Run: func(cmd *cobra.Command, args []string) {
+		for _, def := range config.SettableKeys {
+			val := config.GetValue(def.Key)
+			if def.Kind == config.KindSecret {
+				val = maskKey(val)
+			}
+			if val == "" {
+				val = "(unset)"
+			}
+			line := fmt.Sprintf("%-16s = %-24s  %s", def.Key, val, def.Desc)
+			if def.Kind == config.KindEnum {
+				line += fmt.Sprintf(" [%s]", joinStrings(def.Enum, "|"))
+			}
+			fmt.Println(line)
+		}
+	},
+}
+
+func joinStrings(parts []string, sep string) string {
+	out := ""
+	for i, p := range parts {
+		if i > 0 {
+			out += sep
+		}
+		out += p
+	}
+	return out
+}
+
 func init() {
 	usageCmd.Flags().BoolVar(&usageDaily, "daily", false, "Show daily cost breakdown")
 	usageCmd.Flags().BoolVar(&usageWeekly, "weekly", false, "Show weekly cost breakdown")
 	configCmd.Flags().BoolVar(&listModels, "list-models", false, "List available models from the API")
+
+	configCmd.AddCommand(configGetCmd)
+	configCmd.AddCommand(configSetCmd)
+	configCmd.AddCommand(configListCmd)
 
 	configCmd.AddCommand(setKeyCmd)
 	configCmd.AddCommand(setBaseURLCmd)

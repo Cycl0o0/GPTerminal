@@ -42,13 +42,17 @@ const (
 	maxStdinBytes        = 2000000
 )
 
-// toolRoundLimit returns the per-turn tool-round bound, honoring the
-// GPTERMINAL_MAX_TOOL_ROUNDS env var when set to a positive integer.
+// toolRoundLimit returns the per-turn tool-round bound. Precedence:
+// GPTERMINAL_MAX_TOOL_ROUNDS env var, then the max_tool_rounds config key,
+// then the built-in default.
 func toolRoundLimit() int {
 	if v := os.Getenv("GPTERMINAL_MAX_TOOL_ROUNDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return n
 		}
+	}
+	if n := config.MaxToolRounds(); n > 0 {
+		return n
 	}
 	return defaultMaxToolRounds
 }
@@ -70,19 +74,63 @@ type ApprovalDecision struct {
 	AutoApprove bool
 }
 
+// ApprovalMode is the configurable approval policy applied uniformly across
+// every mutation (commands, file writes) before the interactive callbacks run.
+type ApprovalMode string
+
+const (
+	// ApprovalPlan is read-only: every mutation is denied so the model plans
+	// without touching the workspace.
+	ApprovalPlan ApprovalMode = "plan"
+	// ApprovalDefault prompts for commands and file writes (the classic flow).
+	ApprovalDefault ApprovalMode = "default"
+	// ApprovalAutoEdit auto-approves file writes but still prompts for commands.
+	ApprovalAutoEdit ApprovalMode = "auto-edit"
+	// ApprovalYolo auto-approves everything (commands and writes).
+	ApprovalYolo ApprovalMode = "yolo"
+)
+
+// ParseApprovalMode maps a config string to an ApprovalMode, defaulting to
+// ApprovalDefault for unknown/empty values.
+func ParseApprovalMode(s string) ApprovalMode {
+	switch ApprovalMode(strings.ToLower(strings.TrimSpace(s))) {
+	case ApprovalPlan:
+		return ApprovalPlan
+	case ApprovalAutoEdit:
+		return ApprovalAutoEdit
+	case ApprovalYolo:
+		return ApprovalYolo
+	default:
+		return ApprovalDefault
+	}
+}
+
 type StreamOptions struct {
 	AllowWriteTools bool
 	// LiveContent streams assistant text chunk-by-chunk via OnContent as it
 	// arrives, including narration that precedes tool calls. When false (the
 	// default for chat/agent), content is emitted once after the turn and only
 	// when no tool calls were produced.
-	LiveContent      bool
+	LiveContent bool
+	// ApprovalMode selects the policy applied before the interactive approval
+	// callbacks. Empty is treated as ApprovalDefault. In ApprovalPlan mode all
+	// mutations are denied; in ApprovalYolo/ApprovalAutoEdit the relevant
+	// callback is skipped and the action auto-approved.
+	ApprovalMode     ApprovalMode
 	OnThinking       func(string)
 	OnContent        func(string)
 	OnToolCall       func(name, arguments string)
 	OnToolResult     func(name, result string)
 	ApproveCommand   func(CommandApprovalRequest) (ApprovalDecision, error)
 	ApproveFileWrite func(FileWriteApprovalRequest) (ApprovalDecision, error)
+}
+
+// mode returns the effective approval mode (defaulting when unset).
+func (o StreamOptions) mode() ApprovalMode {
+	if o.ApprovalMode == "" {
+		return ApprovalDefault
+	}
+	return o.ApprovalMode
 }
 
 type Runner struct {
@@ -187,6 +235,12 @@ func (r *Runner) streamAssistant(ctx context.Context, history []openai.ChatCompl
 		StreamOptions: &openai.StreamOptions{
 			IncludeUsage: true,
 		},
+	}
+	// Carry the reasoning-effort preference on the shared request; each
+	// provider translates it (OpenAI reasoning_effort, Anthropic OutputConfig
+	// effort, Gemini no-op) and normalizes incompatible fields.
+	if e := config.Effort(); e != "none" {
+		req.ReasoningEffort = e
 	}
 
 	stream, err := r.createStreamWithRetry(ctx, req)
@@ -676,7 +730,7 @@ func (r *Runner) executeToolCall(ctx context.Context, call openai.ToolCall, opts
 		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
 			return "Error: invalid tool arguments: " + err.Error()
 		}
-		out, err := r.searchText(args.Pattern, args.Path)
+		out, err := r.searchText(ctx, args.Pattern, args.Path)
 		if err != nil {
 			return "Error: " + err.Error()
 		}
@@ -816,6 +870,10 @@ func (r *Runner) executeToolCall(ctx context.Context, call openai.ToolCall, opts
 
 	default:
 		if r.mcp != nil && r.mcp.HasTool(call.Function.Name) {
+			// MCP tools may mutate state; in read-only plan mode, refuse them.
+			if opts.mode() == ApprovalPlan {
+				return "MCP tool not run: plan mode is read-only. It will run after the plan is approved."
+			}
 			result, err := r.mcp.HandleToolCall(call.Function.Name, call.Function.Arguments)
 			if err != nil {
 				return "Error: " + err.Error()
@@ -984,7 +1042,7 @@ func (r *Runner) listDirectory(path string) (string, error) {
 	return strings.TrimSpace(b.String()), nil
 }
 
-func (r *Runner) searchText(pattern, path string) (string, error) {
+func (r *Runner) searchText(ctx context.Context, pattern, path string) (string, error) {
 	pattern = strings.TrimSpace(pattern)
 	if pattern == "" {
 		return "", fmt.Errorf("pattern cannot be empty")
@@ -995,7 +1053,7 @@ func (r *Runner) searchText(pattern, path string) (string, error) {
 	}
 
 	if rgPath, err := exec.LookPath("rg"); err == nil {
-		out, execErr := exec.Command(rgPath, "-n", "--hidden", "--glob", "!.git", pattern, searchPath).CombinedOutput()
+		out, execErr := exec.CommandContext(ctx, rgPath, "-n", "--hidden", "--glob", "!.git", pattern, searchPath).CombinedOutput()
 		if execErr != nil {
 			var exitErr *exec.ExitError
 			if ok := errorAs(execErr, &exitErr); ok && exitErr.ExitCode() == 1 {
@@ -1006,7 +1064,7 @@ func (r *Runner) searchText(pattern, path string) (string, error) {
 		return truncateText(string(out), maxToolOutputChars), nil
 	}
 
-	out, execErr := exec.Command("grep", "-R", "-n", pattern, searchPath).CombinedOutput()
+	out, execErr := exec.CommandContext(ctx, "grep", "-R", "-n", pattern, searchPath).CombinedOutput()
 	if execErr != nil {
 		var exitErr *exec.ExitError
 		if ok := errorAs(execErr, &exitErr); ok && exitErr.ExitCode() == 1 {
@@ -1171,12 +1229,23 @@ func (r *Runner) runCommand(ctx context.Context, command string, opts StreamOpti
 	}
 
 	if err := validateSafeCommand(args); err == nil {
-		return r.executeCommandArgs(command, args)
+		return r.executeCommandArgs(ctx, command, args)
 	}
 
 	if !opts.AllowWriteTools {
 		return "", fmt.Errorf("command %q is not allowed in read-only chat mode", args[0])
 	}
+
+	switch opts.mode() {
+	case ApprovalPlan:
+		// Read-only planning: refuse the mutation but keep the turn going so
+		// the model can record it in its plan.
+		return "Command not run: plan mode is read-only. Describe it in your plan; it will run after the plan is approved.", nil
+	case ApprovalYolo:
+		// Skip the prompt entirely.
+		return r.executeCommandArgs(ctx, command, args)
+	}
+
 	// Commands not in the writable allowlist still go through the approval
 	// flow so the user can approve arbitrary commands (e.g. fastfetch).
 	if opts.ApproveCommand == nil {
@@ -1196,19 +1265,21 @@ func (r *Runner) runCommand(ctx context.Context, command string, opts StreamOpti
 		return "Command rejected by user.", nil
 	}
 
-	return r.executeCommandArgs(command, args)
+	return r.executeCommandArgs(ctx, command, args)
 }
 
-func (r *Runner) executeCommandArgs(command string, args []string) (string, error) {
+func (r *Runner) executeCommandArgs(ctx context.Context, command string, args []string) (string, error) {
 	if r.hooks != nil {
-		r.hooks.Fire(context.Background(), hooks.PreCommand, &hooks.CommandContext{
+		r.hooks.Fire(ctx, hooks.PreCommand, &hooks.CommandContext{
 			Command: command,
 			Args:    args,
 			WorkDir: r.workDir,
 		})
 	}
 
-	cmd := exec.Command(args[0], args[1:]...)
+	// CommandContext so a hung command dies when the turn's ctx is canceled
+	// (TUI Esc / serve-mode cancel / Ctrl+C) instead of wedging the loop.
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Dir = r.workDir
 	out, runErr := cmd.CombinedOutput()
 
@@ -1227,7 +1298,7 @@ func (r *Runner) executeCommandArgs(command string, args []string) (string, erro
 	}
 
 	if r.hooks != nil {
-		r.hooks.Fire(context.Background(), hooks.PostCommand, &hooks.CommandResult{
+		r.hooks.Fire(ctx, hooks.PostCommand, &hooks.CommandResult{
 			Command:  command,
 			ExitCode: exitCode,
 			Output:   result,
@@ -1241,9 +1312,6 @@ func (r *Runner) executeCommandArgs(command string, args []string) (string, erro
 func (r *Runner) writeFile(path, content string, opts StreamOptions) (string, error) {
 	if !opts.AllowWriteTools {
 		return "", fmt.Errorf("write_file is not available in read-only chat mode")
-	}
-	if opts.ApproveFileWrite == nil {
-		return "", fmt.Errorf("write_file requires an approval-capable chat session")
 	}
 
 	resolved, err := r.resolveWorkspacePath(path)
@@ -1268,16 +1336,16 @@ func (r *Runner) writeFile(path, content string, opts StreamOptions) (string, er
 		return "No changes required.", nil
 	}
 
-	decision, err := opts.ApproveFileWrite(FileWriteApprovalRequest{
+	approved, msg, err := r.approveWrite(FileWriteApprovalRequest{
 		Path:     r.relativePath(resolved),
 		Diff:     diff,
 		Existing: exists,
-	})
+	}, opts)
 	if err != nil {
 		return "", err
 	}
-	if !decision.Approved {
-		return "Write rejected by user.", nil
+	if !approved {
+		return msg, nil
 	}
 
 	if err := fileutil.WriteText(resolved, content); err != nil {
@@ -1285,6 +1353,29 @@ func (r *Runner) writeFile(path, content string, opts StreamOptions) (string, er
 	}
 
 	return truncateText(fmt.Sprintf("Wrote file: %s\nDiff:\n%s", resolved, diff), maxToolOutputChars), nil
+}
+
+// approveWrite applies the approval-mode policy to a file write. It returns
+// (approved, message, err): plan mode denies with a planning notice; yolo and
+// auto-edit auto-approve; default consults opts.ApproveFileWrite.
+func (r *Runner) approveWrite(req FileWriteApprovalRequest, opts StreamOptions) (bool, string, error) {
+	switch opts.mode() {
+	case ApprovalPlan:
+		return false, "File not written: plan mode is read-only. Describe the change in your plan; it will apply after the plan is approved.", nil
+	case ApprovalYolo, ApprovalAutoEdit:
+		return true, "", nil
+	}
+	if opts.ApproveFileWrite == nil {
+		return false, "", fmt.Errorf("file writes require an approval-capable session")
+	}
+	decision, err := opts.ApproveFileWrite(req)
+	if err != nil {
+		return false, "", err
+	}
+	if !decision.Approved {
+		return false, "Write rejected by user.", nil
+	}
+	return true, "", nil
 }
 
 type editOp struct {
@@ -1295,9 +1386,6 @@ type editOp struct {
 func (r *Runner) editFile(path string, edits []editOp, opts StreamOptions) (string, error) {
 	if !opts.AllowWriteTools {
 		return "", fmt.Errorf("edit_file is not available in read-only chat mode")
-	}
-	if opts.ApproveFileWrite == nil {
-		return "", fmt.Errorf("edit_file requires an approval-capable chat session")
 	}
 	if len(edits) == 0 {
 		return "", fmt.Errorf("no edits provided")
@@ -1330,16 +1418,16 @@ func (r *Runner) editFile(path string, edits []editOp, opts StreamOptions) (stri
 	}
 
 	diff := diffutil.Unified(r.relativePath(resolved), existing, modified)
-	decision, err := opts.ApproveFileWrite(FileWriteApprovalRequest{
+	approved, msg, err := r.approveWrite(FileWriteApprovalRequest{
 		Path:     r.relativePath(resolved),
 		Diff:     diff,
 		Existing: true,
-	})
+	}, opts)
 	if err != nil {
 		return "", err
 	}
-	if !decision.Approved {
-		return "Edit rejected by user.", nil
+	if !approved {
+		return msg, nil
 	}
 
 	if err := fileutil.WriteText(resolved, modified); err != nil {
@@ -1371,7 +1459,10 @@ func (r *Runner) executeCode(ctx context.Context, language, code string, opts St
 	if !opts.AllowWriteTools {
 		return "", fmt.Errorf("execute_code is not available in read-only chat mode")
 	}
-	if opts.ApproveCommand == nil {
+	if opts.mode() == ApprovalPlan {
+		return "Code not executed: plan mode is read-only. It will run after the plan is approved.", nil
+	}
+	if opts.mode() != ApprovalYolo && opts.ApproveCommand == nil {
 		return "", fmt.Errorf("execute_code requires an approval-capable chat session")
 	}
 
@@ -1405,14 +1496,16 @@ func (r *Runner) executeCode(ctx context.Context, language, code string, opts St
 	}
 	displayCmd += " " + tmpName
 
-	decision, err := opts.ApproveCommand(CommandApprovalRequest{
-		Command: displayCmd,
-	})
-	if err != nil {
-		return "", err
-	}
-	if !decision.Approved {
-		return "Code execution rejected by user.", nil
+	if opts.mode() != ApprovalYolo {
+		decision, err := opts.ApproveCommand(CommandApprovalRequest{
+			Command: displayCmd,
+		})
+		if err != nil {
+			return "", err
+		}
+		if !decision.Approved {
+			return "Code execution rejected by user.", nil
+		}
 	}
 
 	var cmdArgs []string

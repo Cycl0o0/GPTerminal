@@ -123,7 +123,12 @@ func runChatCommand(cmd *cobra.Command, args []string, sessionName string, force
 				} else {
 					fmt.Fprint(os.Stderr, "Approve? [Y/n]: ")
 				}
-				answer, _ := reader.ReadString('\n')
+				answer, readErr := reader.ReadString('\n')
+				if readErr != nil {
+					// EOF / read failure (piped input, Ctrl-D): fail closed —
+					// never auto-approve a mutation the user did not consent to.
+					return chatutil.ApprovalDecision{Approved: false}, nil
+				}
 				answer = strings.TrimSpace(strings.ToLower(answer))
 				switch answer {
 				case "a", "auto":
@@ -134,15 +139,20 @@ func runChatCommand(cmd *cobra.Command, args []string, sessionName string, force
 					return chatutil.ApprovalDecision{Approved: true}, nil
 				case "n", "no", "reject":
 					return chatutil.ApprovalDecision{Approved: false}, nil
-				default:
+				case "y", "yes", "":
 					return chatutil.ApprovalDecision{Approved: true}, nil
+				default:
+					return chatutil.ApprovalDecision{Approved: false}, nil
 				}
 			},
 			ApproveFileWrite: func(req chatutil.FileWriteApprovalRequest) (chatutil.ApprovalDecision, error) {
 				fmt.Fprintf(os.Stderr, "Proposed file write: %s\n", req.Path)
 				fmt.Fprintf(os.Stderr, "%s\n", req.Diff)
 				fmt.Fprint(os.Stderr, "Approve file write? [Y/n]: ")
-				answer, _ := reader.ReadString('\n')
+				answer, readErr := reader.ReadString('\n')
+				if readErr != nil {
+					return chatutil.ApprovalDecision{Approved: false}, nil
+				}
 				answer = strings.TrimSpace(strings.ToLower(answer))
 				if answer == "n" || answer == "no" || answer == "reject" {
 					return chatutil.ApprovalDecision{Approved: false}, nil

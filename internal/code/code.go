@@ -16,13 +16,35 @@ import (
 	"github.com/cycl0o0/GPTerminal/internal/mcp"
 	"github.com/cycl0o0/GPTerminal/internal/session"
 	"github.com/cycl0o0/GPTerminal/internal/system"
+	codetui "github.com/cycl0o0/GPTerminal/internal/tui/code"
 	"github.com/cycl0o0/GPTerminal/internal/usage"
 	openai "github.com/sashabaranov/go-openai"
+	"golang.org/x/term"
 )
 
+// useTUI decides whether to launch the full-screen TUI: both stdin and stdout
+// must be TTYs, tui config must not be "off", and --no-tui must not be set.
+func useTUI(cfg Config) bool {
+	if cfg.ForceNoTUI {
+		return false
+	}
+	if config.TUIMode() == "off" {
+		return false
+	}
+	stdinTTY := term.IsTerminal(int(os.Stdin.Fd()))
+	stdoutTTY := term.IsTerminal(int(os.Stdout.Fd()))
+	if config.TUIMode() == "on" {
+		return stdoutTTY // honor explicit opt-in as long as we can draw
+	}
+	return stdinTTY && stdoutTTY
+}
+
 type Config struct {
-	SessionName string
-	Model       string // optional in-memory model override
+	SessionName  string
+	Model        string // optional in-memory model override
+	ApprovalMode string // optional override: plan | default | auto-edit | yolo
+	Effort       string // optional override: none | minimal | low | medium | high | max
+	ForceNoTUI   bool   // force the plain REPL even on a TTY
 }
 
 func Run(ctx context.Context, cfg Config) error {
@@ -32,6 +54,14 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	if cfg.Model != "" {
 		config.SetActiveModel(cfg.Model)
+	}
+	if cfg.Effort != "" {
+		config.SetActiveEffort(cfg.Effort)
+	}
+
+	approvalMode := chatutil.ParseApprovalMode(config.ApprovalMode())
+	if cfg.ApprovalMode != "" {
+		approvalMode = chatutil.ParseApprovalMode(cfg.ApprovalMode)
 	}
 
 	sysInfo := system.Detect()
@@ -50,6 +80,18 @@ func Run(ctx context.Context, cfg Config) error {
 	runner := chatutil.NewRunnerWithMCP(client, sysInfo, mcpReg)
 
 	projectCtx := gatherProjectContext(cwd)
+
+	// Route to the full-screen bubbletea TUI when appropriate: interactive TTY,
+	// not explicitly disabled (--no-tui / tui=off). Otherwise fall through to
+	// the plain REPL, which also handles non-TTY/piped stdin.
+	if useTUI(cfg) {
+		return codetui.Run(ctx, codetui.Options{
+			SessionName:  cfg.SessionName,
+			ApprovalMode: approvalMode,
+			ProjectCtx:   projectCtx,
+			Provider:     client.ProviderName(),
+		}, client, sysInfo, runner, mcpReg)
+	}
 
 	printBanner(cwd, client.ProviderName(), cfg.SessionName)
 
@@ -114,6 +156,7 @@ func Run(ctx context.Context, cfg Config) error {
 		text, finalHistory, err := runner.Stream(ctx, messages, chatutil.StreamOptions{
 			AllowWriteTools: true,
 			LiveContent:     true,
+			ApprovalMode:    approvalMode,
 			OnThinking: func(t string) {
 				if strings.TrimSpace(t) != "" {
 					line := truncate(t, 160)
@@ -155,7 +198,12 @@ func Run(ctx context.Context, cfg Config) error {
 					prompt = "Approve? [Y/n]: "
 				}
 				fmt.Fprint(os.Stderr, prompt)
-				answer, _ := approvalReader.ReadString('\n')
+				answer, readErr := approvalReader.ReadString('\n')
+				if readErr != nil {
+					// EOF / read failure (piped input, Ctrl-D): fail closed so
+					// a lost stdin can never silently auto-approve a mutation.
+					return chatutil.ApprovalDecision{Approved: false}, nil
+				}
 				answer = strings.TrimSpace(strings.ToLower(answer))
 
 				switch answer {
@@ -167,15 +215,22 @@ func Run(ctx context.Context, cfg Config) error {
 					return chatutil.ApprovalDecision{Approved: true}, nil
 				case "n", "no":
 					return chatutil.ApprovalDecision{Approved: false}, nil
-				default:
+				case "y", "yes", "":
 					return chatutil.ApprovalDecision{Approved: true}, nil
+				default:
+					// Unrecognized input is NOT consent — deny rather than the
+					// old approve-on-anything default.
+					return chatutil.ApprovalDecision{Approved: false}, nil
 				}
 			},
 			ApproveFileWrite: func(req chatutil.FileWriteApprovalRequest) (chatutil.ApprovalDecision, error) {
 				fmt.Fprintf(os.Stderr, "\n\033[1mFile:\033[0m %s\n", req.Path)
 				fmt.Fprintf(os.Stderr, "%s\n", req.Diff)
 				fmt.Fprint(os.Stderr, "Approve? [Y/n]: ")
-				answer, _ := approvalReader.ReadString('\n')
+				answer, readErr := approvalReader.ReadString('\n')
+				if readErr != nil {
+					return chatutil.ApprovalDecision{Approved: false}, nil
+				}
 				answer = strings.TrimSpace(strings.ToLower(answer))
 				if answer == "n" || answer == "no" {
 					return chatutil.ApprovalDecision{Approved: false}, nil

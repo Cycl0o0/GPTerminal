@@ -102,6 +102,12 @@ func (p *AnthropicProvider) convertRequest(req openai.ChatCompletionRequest) ant
 		params.Temperature = param.NewOpt(float64(req.Temperature))
 	}
 
+	// Reasoning effort → Anthropic OutputConfig.Effort. Anthropic has no
+	// "minimal" tier, so it maps to "low"; other tiers pass through 1:1.
+	if eff := anthropicEffort(req.ReasoningEffort); eff != "" {
+		params.OutputConfig = anthropic.OutputConfigParam{Effort: eff}
+	}
+
 	if len(req.Tools) > 0 {
 		for _, t := range req.Tools {
 			if t.Function == nil {
@@ -138,6 +144,23 @@ func (p *AnthropicProvider) convertRequest(req openai.ChatCompletionRequest) ant
 	}
 
 	return params
+}
+
+// anthropicEffort maps the canonical reasoning-effort setting to Anthropic's
+// OutputConfig effort tier, returning "" when effort is unset/none.
+func anthropicEffort(effort string) anthropic.OutputConfigEffort {
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "minimal", "low":
+		return anthropic.OutputConfigEffortLow
+	case "medium":
+		return anthropic.OutputConfigEffortMedium
+	case "high":
+		return anthropic.OutputConfigEffortHigh
+	case "max":
+		return anthropic.OutputConfigEffortMax
+	default:
+		return ""
+	}
 }
 
 func (p *AnthropicProvider) convertResponse(msg *anthropic.Message, model string) openai.ChatCompletionResponse {
@@ -204,9 +227,16 @@ func (s *anthropicStream) Recv() (ChatStreamEvent, error) {
 			idx := int(cbs.Index)
 			if cbs.ContentBlock.Type == "tool_use" {
 				tu := cbs.ContentBlock.AsToolUse()
+				// Index MUST be set: the runner's mergeToolCalls keys tool
+				// calls by ToolCall.Index and falls back to slice position
+				// (always 0 here, since each block is emitted as its own
+				// single-element event) when Index is nil — which collapses
+				// every Claude tool call in a turn into one corrupted call.
+				callIdx := idx
 				s.toolCalls[idx] = &openai.ToolCall{
-					ID:   tu.ID,
-					Type: openai.ToolTypeFunction,
+					Index: &callIdx,
+					ID:    tu.ID,
+					Type:  openai.ToolTypeFunction,
 					Function: openai.FunctionCall{
 						Name: tu.Name,
 					},

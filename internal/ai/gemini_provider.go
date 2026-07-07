@@ -326,9 +326,15 @@ func (s *geminiStream) Recv() (ChatStreamEvent, error) {
 					evt.Content += string(v)
 				case genai.FunctionCall:
 					args, _ := json.Marshal(v.Args)
+					// Set Index so the runner's mergeToolCalls keys each call
+					// distinctly even if the SDK ever splits parallel calls
+					// across separate Recv chunks (otherwise all collapse to
+					// slice position 0). callIdx is monotonic across the turn.
+					callIdx := s.callIdx
 					evt.ToolCalls = append(evt.ToolCalls, openai.ToolCall{
-						ID:   fmt.Sprintf("call_%d", s.callIdx),
-						Type: openai.ToolTypeFunction,
+						Index: &callIdx,
+						ID:    fmt.Sprintf("call_%d", s.callIdx),
+						Type:  openai.ToolTypeFunction,
 						Function: openai.FunctionCall{
 							Name:      v.Name,
 							Arguments: string(args),
